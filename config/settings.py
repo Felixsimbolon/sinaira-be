@@ -50,7 +50,10 @@ INSTALLED_APPS = [
 
     # Installed Apps
     'rest_framework',
-    'corsheaders'
+    'corsheaders',
+
+    # Project Apps
+    'accounts',
 ]
 
 MIDDLEWARE = [
@@ -160,3 +163,26 @@ if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
     CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
+
+# ── Custom User Model ────────────────────────────────────────────────────────
+AUTH_USER_MODEL = "accounts.User"
+
+# ── Django REST Framework ────────────────────────────────────────────────────
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": (
+        "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
+    ),
+}
+
+# ── SimpleJWT ────────────────────────────────────────────────────────────────
+from datetime import timedelta  # noqa: E402
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": False,
+    "AUTH_HEADER_TYPES": ("Bearer",),
+}
