@@ -1,3 +1,12 @@
-from django.shortcuts import render
+from rest_framework import viewsets
+from rest_framework.permissions import IsAuthenticated
 
-# Create your views here.
+from .models import Therapist
+from .permissions import CanManageTherapist
+from .serializers import TherapistSerializer
+
+
+class TherapistViewSet(viewsets.ModelViewSet):
+    queryset = Therapist.objects.all()
+    serializer_class = TherapistSerializer
+    permission_classes = [IsAuthenticated, CanManageTherapist]
