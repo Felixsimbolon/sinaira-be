@@ -51,9 +51,11 @@ INSTALLED_APPS = [
     # Installed Apps
     'rest_framework',
     'corsheaders',
+    'django_filters',
 
     # Project Apps
     'accounts',
+    'booking',
 ]
 
 MIDDLEWARE = [

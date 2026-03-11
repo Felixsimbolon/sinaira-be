@@ -22,4 +22,5 @@ urlpatterns = [
 
     # ── API endpoints ─────────────────────────────────────────────────
     path('api/', include('accounts.urls')),
+    path('api/', include('booking.urls')),
 ]
