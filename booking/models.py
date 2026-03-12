@@ -127,6 +127,12 @@ class Booking(models.Model):
         help_text="Internal notes (visible to staff only)"
     )
 
+    voucher_code = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Applied voucher code for this booking"
+    )
+
     # Booking metadata
     status = models.CharField(
         max_length=20,
