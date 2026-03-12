@@ -28,6 +28,8 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'aromatherapy_oil',
             'kondisi_khusus',
             'tahu_dari',
+            'notes',
+            'voucher_code',
             'status',
             'created_at',
         ]
@@ -123,6 +125,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'therapist',
             'therapist_id',
             'notes',
+            'voucher_code',
             'created_at',
             'updated_at',
         ]
