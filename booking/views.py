@@ -11,6 +11,7 @@ from .serializers import (
     BookingHistorySerializer
 )
 from .permissions import IsAdminOrSupervisorOrOwner
+from .utils import extract_booking_from_whatsapp_message
 
 
 class AllowAnyPermission(permissions.BasePermission):
@@ -201,4 +202,47 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+# ──────────────────────────────────────────────────────────────────
+# UTILITY VIEWS
+# ──────────────────────────────────────────────────────────────────
+
+class ParseWhatsAppMessageView(APIView):
+    """
+    Parse a WhatsApp reservation message and return extracted booking fields.
+
+    Does NOT create a booking or touch the database — purely for data extraction.
+
+    Request body (JSON):
+        { "message": "<raw WhatsApp text>" }
+
+    Response (200):
+        {
+            "nama": "",
+            "alamat": "",
+            "kota": "",
+            "no_hp": "",
+            "tgl_treatment": "",
+            "jam_treatment": "",
+            "perawatan_pilihan": "",
+            "aromatherapy_oil": "",
+            "kondisi_khusus": "",
+            "tahu_dari": ""
+        }
+
+    Accessible to anyone (public endpoint, no sensitive data is stored).
+    """
+    permission_classes = [AllowAnyPermission]
+
+    def post(self, request):
+        message = request.data.get('message', '')
+        if not message or not isinstance(message, str):
+            return Response(
+                {'error': 'Field "message" wajib diisi dan harus berupa string.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        extracted = extract_booking_from_whatsapp_message(message)
+        return Response(extracted, status=status.HTTP_200_OK)
 

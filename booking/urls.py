@@ -5,6 +5,7 @@ from .views import (
     CheckPhoneNumberView,
     AdminBookingListView,
     AdminBookingDetailView,
+    ParseWhatsAppMessageView,
 )
 
 app_name = 'booking'
@@ -26,4 +27,8 @@ urlpatterns = [
     
     # Get/Update booking detail by booking_id (GET, PUT, PATCH)
     path('admin/bookings/<str:booking_id>/', AdminBookingDetailView.as_view(), name='admin-booking-detail'),
+
+    # ── Utility endpoints ─────────────────────────────────────────
+    # Parse a WhatsApp message and return extracted fields (POST) — no DB write
+    path('bookings/parse-whatsapp/', ParseWhatsAppMessageView.as_view(), name='parse-whatsapp'),
 ]
