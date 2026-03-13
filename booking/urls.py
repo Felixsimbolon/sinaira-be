@@ -5,6 +5,9 @@ from .views import (
     CheckPhoneNumberView,
     AdminBookingListView,
     AdminBookingDetailView,
+    AdminBookingStatusUpdateView,
+    AdminAssignTherapistView,
+    TherapistBookingStatusUpdateView,
     ParseWhatsAppMessageView,
 )
 
@@ -27,6 +30,15 @@ urlpatterns = [
     
     # Get/Update booking detail by booking_id (GET, PUT, PATCH)
     path('admin/bookings/<str:booking_id>/', AdminBookingDetailView.as_view(), name='admin-booking-detail'),
+
+    # Update booking status by booking_id (PATCH)
+    path('admin/bookings/<str:booking_id>/status/', AdminBookingStatusUpdateView.as_view(), name='admin-booking-status-update'),
+
+    # Assign therapist by booking_id (PATCH)
+    path('admin/bookings/<str:booking_id>/assign-therapist/', AdminAssignTherapistView.as_view(), name='admin-booking-assign-therapist'),
+
+    # Therapist updates own assigned booking status (PATCH)
+    path('therapist/bookings/<str:booking_id>/status/', TherapistBookingStatusUpdateView.as_view(), name='therapist-booking-status-update'),
 
     # ── Utility endpoints ─────────────────────────────────────────
     # Parse a WhatsApp message and return extracted fields (POST) — no DB write

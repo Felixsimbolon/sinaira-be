@@ -34,8 +34,21 @@ class Booking(models.Model):
     class BookingStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
         CONFIRMED = "CONFIRMED", "Confirmed"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        CHECKED_IN = "CHECKED_IN", "Checked-in"
+        CHECKED_OUT = "CHECKED_OUT", "Checked-out"
         CANCELLED = "CANCELLED", "Cancelled"
         COMPLETED = "COMPLETED", "Completed"
+
+    VALID_STATUS_TRANSITIONS = {
+        BookingStatus.PENDING: {BookingStatus.CONFIRMED, BookingStatus.CANCELLED},
+        BookingStatus.CONFIRMED: {BookingStatus.ASSIGNED, BookingStatus.CANCELLED},
+        BookingStatus.ASSIGNED: {BookingStatus.CHECKED_IN, BookingStatus.CANCELLED},
+        BookingStatus.CHECKED_IN: {BookingStatus.CHECKED_OUT},
+        BookingStatus.CHECKED_OUT: {BookingStatus.COMPLETED},
+        BookingStatus.CANCELLED: set(),
+        BookingStatus.COMPLETED: set(),
+    }
 
     # Unique 6-digit alphanumeric booking ID
     booking_id = models.CharField(
@@ -154,3 +167,27 @@ class Booking(models.Model):
 
     def __str__(self):
         return f"{self.booking_id} - {self.nama} - {self.tgl_treatment}"
+
+    def can_transition_to(self, new_status: str) -> bool:
+        """Return True when transition from current status to new_status is allowed."""
+        allowed_statuses = self.VALID_STATUS_TRANSITIONS.get(self.status, set())
+        return new_status in allowed_statuses
+
+    def update_status(self, new_status: str):
+        """Update booking status when transition is valid."""
+        if not self.can_transition_to(new_status):
+            raise ValueError(
+                f"Status transition from {self.status} to {new_status} is not allowed."
+            )
+
+        self.status = new_status
+        self.save(update_fields=["status", "updated_at"])
+
+    def assign_therapist(self, therapist):
+        """Assign therapist and move status to ASSIGNED when allowed."""
+        if self.status != self.BookingStatus.CONFIRMED:
+            raise ValueError("Therapist can only be assigned when booking is CONFIRMED.")
+
+        self.therapist = therapist
+        self.status = self.BookingStatus.ASSIGNED
+        self.save(update_fields=["therapist", "status", "updated_at"])
