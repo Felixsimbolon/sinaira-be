@@ -187,6 +187,16 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
 
     def update(self, request, *args, **kwargs):
         try:
+            instance = self.get_object()
+
+            if instance.status != Booking.BookingStatus.PENDING:
+                return Response(
+                    {
+                        'error': 'Booking hanya dapat di-update penuh ketika status masih PENDING.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             if any(field in request.data for field in ['status', 'therapist', 'therapist_id']):
                 return Response(
                     {
@@ -196,7 +206,6 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
                 )
 
             partial = kwargs.pop('partial', False)
-            instance = self.get_object()
             serializer = self.get_serializer(instance, data=request.data, partial=partial)
             serializer.is_valid(raise_exception=True)
             self.perform_update(serializer)

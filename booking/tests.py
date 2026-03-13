@@ -233,6 +233,96 @@ class BookingStatusFlowAPITest(APITestCase):
             therapist=therapist,
         )
 
+    def _full_update_payload(self):
+        return {
+            'nama': 'Budi Santoso Updated',
+            'alamat': 'Jl. Melati No. 10',
+            'kota': 'Depok',
+            'no_hp': '081234567891',
+            'tgl_treatment': (date.today() + timedelta(days=2)).isoformat(),
+            'jam_treatment': '11:00:00',
+            'perawatan_pilihan': 'Deep Tissue',
+            'aromatherapy_oil': Booking.AromatherapyChoice.ROSE,
+            'kondisi_khusus': 'None',
+            'tahu_dari': 'Google',
+            'notes': 'Updated notes',
+            'voucher_code': 'PROMO10',
+        }
+
+    def test_admin_bisa_full_update_booking_saat_pending(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.put(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            self._full_update_payload(),
+            format='json',
+        )
+
+        booking.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking.nama, 'Budi Santoso Updated')
+        self.assertEqual(booking.kota, 'Depok')
+
+    def test_booking_confirmed_tidak_bisa_full_update(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.put(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            self._full_update_payload(),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_booking_assigned_tidak_bisa_full_update(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.ASSIGNED, therapist=self.therapist)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.put(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            self._full_update_payload(),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_booking_checked_in_tidak_bisa_full_update(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CHECKED_IN, therapist=self.therapist)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.put(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            self._full_update_payload(),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_therapist_tidak_bisa_full_update_booking(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+        self.client.force_authenticate(user=self.therapist)
+
+        response = self.client.put(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            self._full_update_payload(),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_user_tanpa_hak_akses_tidak_bisa_full_update_booking(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+
+        response = self.client.put(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            self._full_update_payload(),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_booking_baru_default_status_pending(self):
         booking = self._create_booking()
         self.assertEqual(booking.status, Booking.BookingStatus.PENDING)
@@ -284,6 +374,40 @@ class BookingStatusFlowAPITest(APITestCase):
         response = self.client.patch(
             f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
             {'therapist_id': self.therapist.id},
+            format='json',
+        )
+
+        booking.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking.status, Booking.BookingStatus.ASSIGNED)
+
+    def test_admin_bisa_reassign_therapist_saat_status_assigned(self):
+        booking = self._create_booking(
+            status_value=Booking.BookingStatus.ASSIGNED,
+            therapist=self.therapist,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.other_therapist.id},
+            format='json',
+        )
+
+        booking.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking.therapist_id, self.other_therapist.id)
+
+    def test_reassign_therapist_status_tetap_assigned(self):
+        booking = self._create_booking(
+            status_value=Booking.BookingStatus.ASSIGNED,
+            therapist=self.therapist,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.other_therapist.id},
             format='json',
         )
 
@@ -457,6 +581,42 @@ class BookingStatusFlowAPITest(APITestCase):
         response = self.client.patch(
             f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
             {'therapist_id': self.therapist.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_reassign_gagal_jika_status_bukan_assigned(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CHECKED_IN, therapist=self.therapist)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.other_therapist.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_assign_gagal_jika_status_bukan_confirmed(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.therapist.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_booking_completed_tidak_bisa_assign_atau_reassign_therapist(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.COMPLETED, therapist=self.therapist)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.other_therapist.id},
             format='json',
         )
 

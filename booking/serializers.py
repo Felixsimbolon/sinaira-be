@@ -230,7 +230,7 @@ class TherapistBookingStatusUpdateSerializer(serializers.ModelSerializer):
 
 
 class BookingAssignTherapistSerializer(serializers.ModelSerializer):
-    """Serializer for assigning therapist to booking in CONFIRMED status."""
+    """Serializer for assigning/reassigning therapist in CONFIRMED or ASSIGNED status."""
 
     therapist_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.filter(role='THERAPIST'),
@@ -249,17 +249,13 @@ class BookingAssignTherapistSerializer(serializers.ModelSerializer):
         if booking is None:
             return attrs
 
-        if booking.status in [
-            Booking.BookingStatus.CANCELLED,
-            Booking.BookingStatus.COMPLETED,
-        ]:
+        allowed_statuses = [
+            Booking.BookingStatus.CONFIRMED,
+            Booking.BookingStatus.ASSIGNED,
+        ]
+        if booking.status not in allowed_statuses:
             raise serializers.ValidationError(
-                {'status': 'Booking dengan status CANCELLED atau COMPLETED tidak dapat di-assign therapist.'}
-            )
-
-        if booking.status != Booking.BookingStatus.CONFIRMED:
-            raise serializers.ValidationError(
-                {'status': 'Therapist hanya dapat di-assign ketika booking berstatus CONFIRMED.'}
+                {'status': 'Therapist hanya dapat di-assign/reassign ketika booking berstatus CONFIRMED atau ASSIGNED.'}
             )
 
         return attrs

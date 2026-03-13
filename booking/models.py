@@ -184,9 +184,9 @@ class Booking(models.Model):
         self.save(update_fields=["status", "updated_at"])
 
     def assign_therapist(self, therapist):
-        """Assign therapist and move status to ASSIGNED when allowed."""
-        if self.status != self.BookingStatus.CONFIRMED:
-            raise ValueError("Therapist can only be assigned when booking is CONFIRMED.")
+        """Assign or reassign therapist when booking is CONFIRMED or ASSIGNED."""
+        if self.status not in [self.BookingStatus.CONFIRMED, self.BookingStatus.ASSIGNED]:
+            raise ValueError("Therapist can only be assigned when booking is CONFIRMED or ASSIGNED.")
 
         self.therapist = therapist
         self.status = self.BookingStatus.ASSIGNED
