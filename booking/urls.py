@@ -5,6 +5,7 @@ from .views import (
     CheckPhoneNumberView,
     AdminBookingListView,
     AdminBookingDetailView,
+    AdminBookingReviewLinkView,
 )
 
 app_name = 'booking'
@@ -26,4 +27,7 @@ urlpatterns = [
     
     # Get/Update booking detail by booking_id (GET, PUT, PATCH)
     path('admin/bookings/<str:booking_id>/', AdminBookingDetailView.as_view(), name='admin-booking-detail'),
+
+    # Generate/get review link token for completed booking (POST)
+    path('admin/bookings/<str:booking_id>/review-link/', AdminBookingReviewLinkView.as_view(), name='admin-booking-review-link'),
 ]

@@ -34,7 +34,7 @@ class BookingAdmin(admin.ModelAdmin):
             'fields': ('kondisi_khusus', 'tahu_dari')
         }),
         ('Assignment & Status', {
-            'fields': ('therapist', 'status', 'notes')
+            'fields': ('therapist', 'status', 'notes', 'voucher_code')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

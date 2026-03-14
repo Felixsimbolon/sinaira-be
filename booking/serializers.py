@@ -28,6 +28,8 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'aromatherapy_oil',
             'kondisi_khusus',
             'tahu_dari',
+            'notes',
+            'voucher_code',
             'status',
             'created_at',
         ]
@@ -74,6 +76,7 @@ class BookingListSerializer(serializers.ModelSerializer):
     Shows: ID booking, Nama customer, Jadwal, Layanan, Status
     """
     jadwal = serializers.SerializerMethodField()
+    has_review = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -84,11 +87,15 @@ class BookingListSerializer(serializers.ModelSerializer):
             'jadwal',
             'perawatan_pilihan',
             'status',
+            'has_review',
         ]
 
     def get_jadwal(self, obj):
         """Combine date and time for display."""
         return f"{obj.tgl_treatment} {obj.jam_treatment.strftime('%H:%M')}"
+
+    def get_has_review(self, obj):
+        return hasattr(obj, 'review')
 
 
 class BookingDetailSerializer(serializers.ModelSerializer):
@@ -123,6 +130,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'therapist',
             'therapist_id',
             'notes',
+            'voucher_code',
             'created_at',
             'updated_at',
         ]

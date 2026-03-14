@@ -30,9 +30,24 @@ class Review(models.Model):
 
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
         related_name="reviews",
+        null=True,
+        blank=True,
         help_text="The customer who wrote the review.",
+    )
+
+    customer_name = models.CharField(
+        max_length=255,
+        default="",
+        help_text="Customer display name captured from booking data.",
+    )
+
+    customer_phone = models.CharField(
+        max_length=20,
+        default="",
+        db_index=True,
+        help_text="Customer phone number captured from booking data.",
     )
 
     rating = models.PositiveSmallIntegerField(

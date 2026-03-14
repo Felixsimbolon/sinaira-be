@@ -1,10 +1,11 @@
-from rest_framework import generics, status
+from rest_framework import generics, permissions, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
+from booking.models import Booking
 from .models import Review
-from .permissions import IsAuthenticatedUser
-from .serializers import ReviewCreateSerializer, ReviewListSerializer
+from .serializers import ReviewContextSerializer, ReviewCreateSerializer, ReviewListSerializer
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -15,19 +16,67 @@ class ReviewCreateView(generics.CreateAPIView):
     """
     Create a therapist review for a completed booking.
 
-    - Only **authenticated** users may access this endpoint (401 otherwise).
+    - Accepts anonymous customers via review token from QR code.
+    - Authenticated staff users are blocked.
     - The booking must be in COMPLETED status.
-    - The booking must belong to the requesting user.
     - Each booking can only be reviewed once.
-    - `therapist` and `customer` are set automatically.
+    - `therapist`, `customer_name`, and `customer_phone` are set automatically.
     """
 
     queryset = Review.objects.all()
     serializer_class = ReviewCreateSerializer
-    permission_classes = [IsAuthenticatedUser]
+    permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        booking_id = request.data.get("booking_id")
+        review_token = request.data.get("review_token")
+
+        if request.user and request.user.is_authenticated and hasattr(request.user, "role"):
+            return Response(
+                {"error": "Role ini tidak diperbolehkan membuat review customer."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not review_token:
+            return Response(
+                {"error": "Token review tidak valid atau tidak tersedia."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not booking_id:
+            return Response(
+                {"error": "booking_id wajib diisi."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        booking = Booking.objects.select_related("therapist").filter(booking_id=booking_id).first()
+        if booking is None:
+            return Response(
+                {"error": "Booking tidak ditemukan."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if booking.review_token != review_token:
+            return Response(
+                {"error": "Token review tidak valid atau sudah kedaluwarsa."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if booking.status != Booking.BookingStatus.COMPLETED:
+            return Response(
+                {
+                    "error": "Review hanya dapat diberikan untuk booking yang sudah selesai (COMPLETED)."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if hasattr(booking, "review"):
+            return Response(
+                {"error": "Booking ini sudah memiliki review."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(data=request.data, context={**self.get_serializer_context(), "booking": booking})
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
 
@@ -37,6 +86,49 @@ class ReviewCreateView(generics.CreateAPIView):
             {"message": "Review berhasil dibuat.", "data": output},
             status=status.HTTP_201_CREATED,
         )
+
+
+class ReviewContextView(APIView):
+    """
+    Resolve booking context for a QR review link.
+
+    GET /api/reviews/context/?token=<review_token>
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        token = request.query_params.get("token")
+
+        if not token:
+            return Response(
+                {"error": "token query parameter wajib diisi."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        booking = Booking.objects.select_related("therapist").filter(review_token=token).first()
+        if booking is None:
+            return Response(
+                {"error": "Token review tidak valid atau sudah kedaluwarsa."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if booking.status != Booking.BookingStatus.COMPLETED:
+            return Response(
+                {
+                    "error": "Review belum tersedia karena sesi belum berstatus COMPLETED."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if booking.therapist is None:
+            return Response(
+                {"error": "Booking belum memiliki therapist yang ditugaskan."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ReviewContextSerializer(booking)
+        return Response(serializer.data)
 
 
 # ──────────────────────────────────────────────────────────────────

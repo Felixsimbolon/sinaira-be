@@ -236,3 +236,6 @@ SIMPLE_JWT = {
     "ROTATE_REFRESH_TOKENS": False,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+# Public frontend route that opens the review form from QR links.
+REVIEW_FORM_BASE_URL = env('REVIEW_FORM_BASE_URL', default='http://localhost:5173/review/create')

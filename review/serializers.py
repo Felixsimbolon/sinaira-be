@@ -11,49 +11,45 @@ class ReviewCreateSerializer(serializers.ModelSerializer):
     Serializer for creating a Review.
 
     The client sends:
-        - booking   (booking PK)
         - rating    (1-5)
         - comment   (optional)
 
-    `therapist` and `customer` are set automatically from the booking
-    and the authenticated user.
+    Booking and token verification are handled in the view.
+    `therapist`, `customer`, `customer_name`, and `customer_phone`
+    are derived from the booking context.
     """
+
+    booking_id = serializers.CharField(source="booking.booking_id", read_only=True)
+    therapist_name = serializers.CharField(source="therapist.name", read_only=True)
+    customer_name = serializers.CharField(read_only=True)
+    customer_phone = serializers.CharField(read_only=True)
 
     class Meta:
         model = Review
         fields = [
             "id",
             "booking",
+            "booking_id",
             "therapist",
+            "therapist_name",
             "customer",
+            "customer_name",
+            "customer_phone",
             "rating",
             "comment",
             "created_at",
         ]
-        read_only_fields = ["id", "therapist", "customer", "created_at"]
-
-    # ── Custom validation ─────────────────────────────────────────
-
-    def validate_booking(self, value: Booking) -> Booking:
-        """Ensure the booking is COMPLETED and belongs to the current user."""
-        request = self.context["request"]
-
-        if value.status != Booking.BookingStatus.COMPLETED:
-            raise serializers.ValidationError(
-                "Review hanya dapat diberikan untuk booking yang sudah selesai (COMPLETED)."
-            )
-
-        if value.user != request.user:
-            raise serializers.ValidationError(
-                "Anda hanya dapat mereview booking milik Anda sendiri."
-            )
-
-        if hasattr(value, "review"):
-            raise serializers.ValidationError(
-                "Booking ini sudah memiliki review."
-            )
-
-        return value
+        read_only_fields = [
+            "id",
+            "booking",
+            "booking_id",
+            "therapist",
+            "therapist_name",
+            "customer",
+            "customer_name",
+            "customer_phone",
+            "created_at",
+        ]
 
     def validate_rating(self, value: int) -> int:
         if value < 1 or value > 5:
@@ -65,7 +61,7 @@ class ReviewCreateSerializer(serializers.ModelSerializer):
     # ── Object creation ───────────────────────────────────────────
 
     def create(self, validated_data):
-        booking: Booking = validated_data["booking"]
+        booking: Booking = self.context["booking"]
         request = self.context["request"]
 
         # Resolve the Therapist profile from the booking's assigned
@@ -83,8 +79,11 @@ class ReviewCreateSerializer(serializers.ModelSerializer):
                 {"booking": "Profil therapist tidak ditemukan."}
             )
 
+        validated_data["booking"] = booking
         validated_data["therapist"] = therapist
-        validated_data["customer"] = request.user
+        validated_data["customer"] = request.user if request.user.is_authenticated else None
+        validated_data["customer_name"] = booking.nama
+        validated_data["customer_phone"] = booking.no_hp
 
         return super().create(validated_data)
 
@@ -94,7 +93,14 @@ class ReviewListSerializer(serializers.ModelSerializer):
 
     booking_id = serializers.CharField(source="booking.booking_id", read_only=True)
     therapist_name = serializers.CharField(source="therapist.name", read_only=True)
-    customer_name = serializers.CharField(source="customer.name", read_only=True)
+    customer_name = serializers.SerializerMethodField()
+
+    def get_customer_name(self, obj: Review) -> str:
+        if obj.customer_name:
+            return obj.customer_name
+        if obj.customer:
+            return obj.customer.name
+        return ""
 
     class Meta:
         model = Review
@@ -106,9 +112,44 @@ class ReviewListSerializer(serializers.ModelSerializer):
             "therapist_name",
             "customer",
             "customer_name",
+            "customer_phone",
             "rating",
             "comment",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+
+class ReviewContextSerializer(serializers.ModelSerializer):
+    """Serializer for opening review form from QR token."""
+
+    booking_id = serializers.CharField(source="booking_id", read_only=True)
+    therapist_name = serializers.CharField(source="therapist.name", read_only=True)
+    therapist_username = serializers.CharField(source="therapist.username", read_only=True)
+    has_review = serializers.SerializerMethodField()
+    existing_review = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Booking
+        fields = [
+            "booking_id",
+            "nama",
+            "no_hp",
+            "status",
+            "tgl_treatment",
+            "jam_treatment",
+            "perawatan_pilihan",
+            "therapist_name",
+            "therapist_username",
+            "has_review",
+            "existing_review",
+        ]
+
+    def get_has_review(self, obj: Booking) -> bool:
+        return hasattr(obj, "review")
+
+    def get_existing_review(self, obj: Booking):
+        if not hasattr(obj, "review"):
+            return None
+        return ReviewListSerializer(obj.review).data
