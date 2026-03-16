@@ -12,9 +12,14 @@ from .serializers import (
     BookingStatusUpdateSerializer,
     TherapistBookingStatusUpdateSerializer,
     BookingAssignTherapistSerializer,
+    BookingGeocodeSerializer,
 )
 from .permissions import IsAdminOrSupervisorOrOwner, IsTherapist
-from .utils import extract_booking_from_whatsapp_message
+from .utils import (
+    extract_booking_from_whatsapp_message,
+    geocode_location_from_address,
+    get_assignable_therapists_by_distance,
+)
 
 
 class AllowAnyPermission(permissions.BasePermission):
@@ -295,6 +300,81 @@ class AdminAssignTherapistView(APIView):
                     'booking_id': booking.booking_id,
                     'status': booking.status,
                     'therapist': serializer.data.get('therapist'),
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingGeocodeView(APIView):
+    """Admin endpoint for geocoding booking-related address fields."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def post(self, request):
+        serializer = BookingGeocodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        latitude, longitude = geocode_location_from_address(
+            alamat=serializer.validated_data.get('alamat', ''),
+            kelurahan=serializer.validated_data.get('kelurahan', ''),
+            kecamatan=serializer.validated_data.get('kecamatan', ''),
+            kota=serializer.validated_data.get('kota', ''),
+        )
+
+        if latitude is None or longitude is None:
+            return Response(
+                {
+                    'error': 'Koordinat tidak ditemukan dari alamat yang diberikan.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {
+                'message': 'Geocoding success',
+                'data': {
+                    'latitude': latitude,
+                    'longitude': longitude,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingTherapistsByDistanceView(APIView):
+    """Admin endpoint for listing assignable therapists sorted by distance."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def get(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            therapists = get_assignable_therapists_by_distance(booking)
+        except ValueError as error:
+            return Response(
+                {
+                    'error': str(error)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {
+                'message': 'Therapists retrieved successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'results': therapists,
                 }
             },
             status=status.HTTP_200_OK

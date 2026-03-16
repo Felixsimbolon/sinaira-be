@@ -7,6 +7,8 @@ from .views import (
     AdminBookingDetailView,
     AdminBookingStatusUpdateView,
     AdminAssignTherapistView,
+    AdminBookingGeocodeView,
+    AdminBookingTherapistsByDistanceView,
     TherapistBookingStatusUpdateView,
     ParseWhatsAppMessageView,
 )
@@ -27,6 +29,9 @@ urlpatterns = [
     # ── Admin endpoints (staff only) ──────────────────────────────
     # List all bookings with search, filter, sorting (GET)
     path('admin/bookings/', AdminBookingListView.as_view(), name='admin-booking-list'),
+
+    # Geocode booking address fields (POST)
+    path('admin/bookings/geocode/', AdminBookingGeocodeView.as_view(), name='admin-booking-geocode'),
     
     # Get/Update booking detail by booking_id (GET, PUT, PATCH)
     path('admin/bookings/<str:booking_id>/', AdminBookingDetailView.as_view(), name='admin-booking-detail'),
@@ -36,6 +41,9 @@ urlpatterns = [
 
     # Assign therapist by booking_id (PATCH)
     path('admin/bookings/<str:booking_id>/assign-therapist/', AdminAssignTherapistView.as_view(), name='admin-booking-assign-therapist'),
+
+    # List assignable therapists sorted by distance for a booking (GET)
+    path('admin/bookings/<str:booking_id>/therapists-by-distance/', AdminBookingTherapistsByDistanceView.as_view(), name='admin-booking-therapists-by-distance'),
 
     # Therapist updates own assigned booking status (PATCH)
     path('therapist/bookings/<str:booking_id>/status/', TherapistBookingStatusUpdateView.as_view(), name='therapist-booking-status-update'),

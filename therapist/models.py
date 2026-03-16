@@ -10,6 +10,13 @@ class Therapist(models.Model):
     specialization = models.CharField(max_length=255, blank=True, default="")
     years_experience = models.PositiveIntegerField(default=0)
     consultation_rate = models.PositiveIntegerField(default=0)
+    alamat = models.TextField(help_text="Therapist address")
+    kota = models.CharField(max_length=100, blank=True, null=True)
+    kelurahan = models.CharField(max_length=100, blank=True, null=True)
+    kecamatan = models.CharField(max_length=100, blank=True, null=True)
+    latitude = models.FloatField(blank=True, null=True)
+    longitude = models.FloatField(blank=True, null=True)
+
     is_active = models.BooleanField(default=True)
     bio = models.TextField(blank=True, default="")
 

@@ -20,7 +20,11 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'booking_id',
             'nama',
             'alamat',
+            'kelurahan',
+            'kecamatan',
             'kota',
+            'latitude',
+            'longitude',
             'no_hp',
             'tgl_treatment',
             'jam_treatment',
@@ -113,7 +117,11 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'booking_id',
             'nama',
             'alamat',
+            'kelurahan',
+            'kecamatan',
             'kota',
+            'latitude',
+            'longitude',
             'no_hp',
             'tgl_treatment',
             'jam_treatment',
@@ -142,6 +150,12 @@ class BookingHistorySerializer(serializers.ModelSerializer):
         fields = [
             'booking_id',
             'nama',
+            'alamat',
+            'kelurahan',
+            'kecamatan',
+            'kota',
+            'latitude',
+            'longitude',
             'no_hp',
             'tgl_treatment',
             'jam_treatment',
@@ -264,3 +278,23 @@ class BookingAssignTherapistSerializer(serializers.ModelSerializer):
         therapist = validated_data['therapist']
         instance.assign_therapist(therapist)
         return instance
+
+
+class BookingGeocodeSerializer(serializers.Serializer):
+    """Serializer for geocoding request payload."""
+
+    alamat = serializers.CharField(required=False, allow_blank=True)
+    kelurahan = serializers.CharField(required=False, allow_blank=True)
+    kecamatan = serializers.CharField(required=False, allow_blank=True)
+    kota = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        alamat = attrs.get('alamat', '').strip()
+        kelurahan = attrs.get('kelurahan', '').strip()
+
+        if not alamat and not kelurahan:
+            raise serializers.ValidationError(
+                {'error': 'Minimal salah satu field alamat atau kelurahan harus diisi.'}
+            )
+
+        return attrs

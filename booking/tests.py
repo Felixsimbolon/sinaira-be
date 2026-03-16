@@ -1,15 +1,19 @@
 from django.test import TestCase
 from datetime import date, time, timedelta
+from unittest.mock import MagicMock, patch
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import User
 from .models import Booking
+from therapist.models import Therapist
 from .utils import (
     sanitize_whatsapp_text,
     normalize_phone,
     normalize_aromatherapy,
     extract_booking_from_whatsapp_message,
+    geocode_location_from_address,
+    get_distances_to_therapists_in_same_city,
 )
 
 
@@ -645,3 +649,322 @@ class BookingStatusFlowAPITest(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class BookingGeolocationTest(TestCase):
+    def test_create_booking_tanpa_field_geolokasi_tetap_valid(self):
+        booking = Booking.objects.create(
+            nama='Geo Customer',
+            alamat='Jl. Geo No. 1',
+            kota='Jakarta',
+            no_hp='081234567890',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(9, 0),
+            perawatan_pilihan='Swedish Massage',
+            aromatherapy_oil=Booking.AromatherapyChoice.JASMINE,
+        )
+
+        self.assertIsNone(booking.latitude)
+        self.assertIsNone(booking.longitude)
+        self.assertIsNone(booking.kelurahan)
+        self.assertIsNone(booking.kecamatan)
+
+    @patch('booking.utils.Nominatim')
+    def test_geocoding_sukses_dari_alamat_lengkap(self, mock_nominatim):
+        geolocator = mock_nominatim.return_value
+        geolocator.geocode.return_value = MagicMock(latitude=-6.2, longitude=106.8)
+
+        lat, lon = geocode_location_from_address(
+            alamat='Jl. Mawar No. 5',
+            kelurahan='Cilandak Barat',
+            kecamatan='Cilandak',
+            kota='Jakarta Selatan',
+        )
+
+        self.assertEqual(lat, -6.2)
+        self.assertEqual(lon, 106.8)
+        geolocator.geocode.assert_called_once()
+
+    @patch('booking.utils.Nominatim')
+    def test_geocoding_fallback_ke_kelurahan_saat_alamat_lengkap_gagal(self, mock_nominatim):
+        geolocator = mock_nominatim.return_value
+        geolocator.geocode.side_effect = [None, MagicMock(latitude=-6.3, longitude=106.7)]
+
+        lat, lon = geocode_location_from_address(
+            alamat='Alamat Tidak Ditemukan',
+            kelurahan='Pondok Labu',
+            kecamatan='Cilandak',
+            kota='Jakarta Selatan',
+        )
+
+        self.assertEqual(lat, -6.3)
+        self.assertEqual(lon, 106.7)
+        self.assertEqual(geolocator.geocode.call_count, 2)
+
+    def test_hitung_jarak_booking_ke_therapist_kota_yang_sama(self):
+        booking = Booking.objects.create(
+            nama='Distance Customer',
+            alamat='Jl. Distance No. 2',
+            kota='Jakarta Selatan',
+            no_hp='081234567891',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(11, 0),
+            perawatan_pilihan='Deep Tissue',
+            aromatherapy_oil=Booking.AromatherapyChoice.ROSE,
+            latitude=-6.30,
+            longitude=106.80,
+        )
+
+        near_therapist = Therapist.objects.create(
+            username='near_therapist',
+            name='Near Therapist',
+            email='near@example.com',
+            kota='Jakarta Selatan',
+            latitude=-6.31,
+            longitude=106.81,
+        )
+        far_therapist = Therapist.objects.create(
+            username='far_therapist',
+            name='Far Therapist',
+            email='far@example.com',
+            kota='Jakarta Selatan',
+            latitude=-6.40,
+            longitude=106.90,
+        )
+        Therapist.objects.create(
+            username='other_city_therapist',
+            name='Other City Therapist',
+            email='othercity@example.com',
+            kota='Bandung',
+            latitude=-6.91,
+            longitude=107.61,
+        )
+
+        results = get_distances_to_therapists_in_same_city(booking)
+
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]['id'], near_therapist.id)
+        self.assertEqual(results[1]['id'], far_therapist.id)
+
+    def test_hitung_jarak_skip_therapist_tanpa_lat_lng(self):
+        booking = Booking.objects.create(
+            nama='Skip Customer',
+            alamat='Jl. Skip No. 3',
+            kota='Jakarta Selatan',
+            no_hp='081234567892',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(12, 0),
+            perawatan_pilihan='Reflexology',
+            aromatherapy_oil=Booking.AromatherapyChoice.LAVENDER,
+            latitude=-6.30,
+            longitude=106.80,
+        )
+
+        Therapist.objects.create(
+            username='missing_coord_therapist',
+            name='Missing Coord Therapist',
+            email='missing@example.com',
+            kota='Jakarta Selatan',
+            latitude=None,
+            longitude=None,
+        )
+
+        results = get_distances_to_therapists_in_same_city(booking)
+        self.assertEqual(results, [])
+
+    def test_hitung_jarak_return_error_jika_booking_tanpa_lat_lng(self):
+        booking = Booking.objects.create(
+            nama='NoCoord Customer',
+            alamat='Jl. NoCoord No. 4',
+            kota='Jakarta Selatan',
+            no_hp='081234567893',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(13, 0),
+            perawatan_pilihan='Swedish Massage',
+            aromatherapy_oil=Booking.AromatherapyChoice.SANDALWOOD,
+        )
+
+        with self.assertRaises(ValueError):
+            get_distances_to_therapists_in_same_city(booking)
+
+
+class BookingGeolocationEndpointAPITest(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='geo_admin',
+            email='geo_admin@example.com',
+            password='password123',
+            name='Geo Admin',
+            role=User.Role.ADMIN,
+        )
+        self.non_admin = User.objects.create_user(
+            username='geo_therapist_actor',
+            email='geo_therapist_actor@example.com',
+            password='password123',
+            name='Geo Therapist Actor',
+            role=User.Role.THERAPIST,
+        )
+
+        self.near_user = User.objects.create_user(
+            username='distance_near_user',
+            email='distance_near_user@example.com',
+            password='password123',
+            name='Distance Near User',
+            role=User.Role.THERAPIST,
+        )
+        self.far_user = User.objects.create_user(
+            username='distance_far_user',
+            email='distance_far_user@example.com',
+            password='password123',
+            name='Distance Far User',
+            role=User.Role.THERAPIST,
+        )
+        self.no_coord_user = User.objects.create_user(
+            username='distance_nocoord_user',
+            email='distance_nocoord_user@example.com',
+            password='password123',
+            name='Distance NoCoord User',
+            role=User.Role.THERAPIST,
+        )
+
+        Therapist.objects.create(
+            username=self.near_user.username,
+            name='Distance Near Profile',
+            email='distance_near_profile@example.com',
+            kota='Jakarta Selatan',
+            kelurahan='Kelurahan Near',
+            kecamatan='Kecamatan Near',
+            latitude=-6.31,
+            longitude=106.81,
+        )
+        Therapist.objects.create(
+            username=self.far_user.username,
+            name='Distance Far Profile',
+            email='distance_far_profile@example.com',
+            kota='Jakarta Selatan',
+            kelurahan='Kelurahan Far',
+            kecamatan='Kecamatan Far',
+            latitude=-6.40,
+            longitude=106.90,
+        )
+        Therapist.objects.create(
+            username=self.no_coord_user.username,
+            name='Distance NoCoord Profile',
+            email='distance_nocoord_profile@example.com',
+            kota='Jakarta Selatan',
+            latitude=None,
+            longitude=None,
+        )
+
+        self.booking = Booking.objects.create(
+            nama='Distance Booking',
+            alamat='Jl. Booking Distance No. 1',
+            kota='Jakarta Selatan',
+            no_hp='081234567800',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(10, 0),
+            perawatan_pilihan='Swedish Massage',
+            aromatherapy_oil=Booking.AromatherapyChoice.LAVENDER,
+            latitude=-6.30,
+            longitude=106.80,
+        )
+
+    @patch('booking.views.geocode_location_from_address')
+    def test_geocode_endpoint_success(self, mock_geocode):
+        mock_geocode.return_value = (-6.2, 106.8)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            '/api/admin/bookings/geocode/',
+            {
+                'alamat': 'Jl. Mawar No. 5',
+                'kelurahan': 'Cilandak Barat',
+                'kecamatan': 'Cilandak',
+                'kota': 'Jakarta Selatan',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['data']['latitude'], -6.2)
+        self.assertEqual(response.data['data']['longitude'], 106.8)
+
+    @patch('booking.views.geocode_location_from_address')
+    def test_geocode_endpoint_fail_not_found(self, mock_geocode):
+        mock_geocode.return_value = (None, None)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            '/api/admin/bookings/geocode/',
+            {
+                'alamat': 'Alamat tidak dikenali',
+                'kelurahan': 'Kelurahan Tidak Dikenal',
+                'kota': 'Jakarta Selatan',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_non_admin_tidak_bisa_akses_geocode_endpoint(self):
+        self.client.force_authenticate(user=self.non_admin)
+
+        response = self.client.post(
+            '/api/admin/bookings/geocode/',
+            {'alamat': 'Jl. Mawar No. 5'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_therapists_by_distance_return_sorted_nearest_first(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/therapists-by-distance/'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data['data']['results']
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]['id'], self.near_user.id)
+        self.assertEqual(results[1]['id'], self.far_user.id)
+
+    def test_therapists_by_distance_skip_therapist_tanpa_koordinat(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/therapists-by-distance/'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        result_ids = [item['id'] for item in response.data['data']['results']]
+        self.assertNotIn(self.no_coord_user.id, result_ids)
+
+    def test_therapists_by_distance_error_jika_booking_tanpa_koordinat(self):
+        booking_no_coord = Booking.objects.create(
+            nama='No Coord Booking',
+            alamat='Jl. No Coord',
+            kota='Jakarta Selatan',
+            no_hp='081234567801',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(14, 0),
+            perawatan_pilihan='Reflexology',
+            aromatherapy_oil=Booking.AromatherapyChoice.ROSE,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(
+            f'/api/admin/bookings/{booking_no_coord.booking_id}/therapists-by-distance/'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_non_admin_tidak_bisa_akses_therapists_by_distance(self):
+        self.client.force_authenticate(user=self.non_admin)
+
+        response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/therapists-by-distance/'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

@@ -89,10 +89,36 @@ class Booking(models.Model):
     alamat = models.TextField(
         help_text="Customer address"
     )
+
+    kelurahan = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Kelurahan"
+    )
+
+    kecamatan = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Kecamatan"
+    )
     
     kota = models.CharField(
         max_length=100,
         help_text="City"
+    )
+
+    latitude = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="Latitude for booking location"
+    )
+
+    longitude = models.FloatField(
+        blank=True,
+        null=True,
+        help_text="Longitude for booking location"
     )
     
     no_hp = models.CharField(
