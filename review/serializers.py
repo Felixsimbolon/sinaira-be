@@ -124,7 +124,7 @@ class ReviewListSerializer(serializers.ModelSerializer):
 class ReviewContextSerializer(serializers.ModelSerializer):
     """Serializer for opening review form from QR token."""
 
-    booking_id = serializers.CharField(source="booking_id", read_only=True)
+    booking_id = serializers.CharField(read_only=True)
     therapist_name = serializers.CharField(source="therapist.name", read_only=True)
     therapist_username = serializers.CharField(source="therapist.username", read_only=True)
     has_review = serializers.SerializerMethodField()

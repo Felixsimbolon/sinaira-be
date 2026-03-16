@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from rest_framework import generics, permissions, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -5,6 +7,7 @@ from rest_framework.views import APIView
 
 from booking.models import Booking
 from .models import Review
+from .permissions import IsSupervisorOrOwner
 from .serializers import ReviewContextSerializer, ReviewCreateSerializer, ReviewListSerializer
 
 
@@ -12,22 +15,78 @@ from .serializers import ReviewContextSerializer, ReviewCreateSerializer, Review
 # CREATE  –  POST /api/reviews/
 # ──────────────────────────────────────────────────────────────────
 
-class ReviewCreateView(generics.CreateAPIView):
+class ReviewCollectionView(APIView):
     """
-    Create a therapist review for a completed booking.
+    Review collection endpoint.
 
-    - Accepts anonymous customers via review token from QR code.
-    - Authenticated staff users are blocked.
-    - The booking must be in COMPLETED status.
-    - Each booking can only be reviewed once.
-    - `therapist`, `customer_name`, and `customer_phone` are set automatically.
+    GET /api/reviews/
+      - Only OWNER and SUPERVISOR may access.
+      - Optional filters:
+        - therapistId=<therapist_id>
+        - startDate=YYYY-MM-DD
+        - endDate=YYYY-MM-DD
+
+    POST /api/reviews/
+      - Public QR-token based review creation.
     """
 
-    queryset = Review.objects.all()
-    serializer_class = ReviewCreateSerializer
-    permission_classes = [permissions.AllowAny]
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [IsAuthenticated(), IsSupervisorOrOwner()]
+        return [permissions.AllowAny()]
 
-    def create(self, request, *args, **kwargs):
+    def get(self, request):
+        qs = Review.objects.select_related("booking", "therapist", "customer")
+
+        therapist_id = request.query_params.get("therapistId")
+        if therapist_id:
+            if not therapist_id.isdigit():
+                return Response(
+                    {"error": "Parameter therapistId harus berupa angka."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            qs = qs.filter(therapist_id=int(therapist_id))
+
+        start_date_raw = request.query_params.get("startDate")
+        end_date_raw = request.query_params.get("endDate")
+
+        start_date = None
+        end_date = None
+
+        if start_date_raw:
+            try:
+                start_date = datetime.strptime(start_date_raw, "%Y-%m-%d").date()
+            except ValueError:
+                return Response(
+                    {"error": "Format startDate tidak valid. Gunakan YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if end_date_raw:
+            try:
+                end_date = datetime.strptime(end_date_raw, "%Y-%m-%d").date()
+            except ValueError:
+                return Response(
+                    {"error": "Format endDate tidak valid. Gunakan YYYY-MM-DD."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if start_date and end_date and start_date > end_date:
+            return Response(
+                {"error": "startDate tidak boleh lebih besar dari endDate."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if start_date:
+            qs = qs.filter(created_at__date__gte=start_date)
+
+        if end_date:
+            qs = qs.filter(created_at__date__lte=end_date)
+
+        serializer = ReviewListSerializer(qs, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
         booking_id = request.data.get("booking_id")
         review_token = request.data.get("review_token")
 
@@ -76,9 +135,12 @@ class ReviewCreateView(generics.CreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = self.get_serializer(data=request.data, context={**self.get_serializer_context(), "booking": booking})
+        serializer = ReviewCreateSerializer(
+            data=request.data,
+            context={"request": request, "booking": booking},
+        )
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        serializer.save()
 
         # Return created review with the list serializer for richer data.
         output = ReviewListSerializer(serializer.instance).data
@@ -132,39 +194,6 @@ class ReviewContextView(APIView):
 
 
 # ──────────────────────────────────────────────────────────────────
-# LIST  –  GET /api/reviews/
-# ──────────────────────────────────────────────────────────────────
-
-class ReviewListView(generics.ListAPIView):
-    """
-    List all reviews.  Supports optional query-param filters:
-        ?therapist=<therapist_pk>
-        ?customer=<user_pk>
-        ?booking=<booking_pk>
-    """
-
-    serializer_class = ReviewListSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        qs = Review.objects.select_related("booking", "therapist", "customer")
-
-        therapist_id = self.request.query_params.get("therapist")
-        if therapist_id:
-            qs = qs.filter(therapist_id=therapist_id)
-
-        customer_id = self.request.query_params.get("customer")
-        if customer_id:
-            qs = qs.filter(customer_id=customer_id)
-
-        booking_id = self.request.query_params.get("booking")
-        if booking_id:
-            qs = qs.filter(booking_id=booking_id)
-
-        return qs
-
-
-# ──────────────────────────────────────────────────────────────────
 # DETAIL  –  GET /api/reviews/<pk>/
 # ──────────────────────────────────────────────────────────────────
 
@@ -173,4 +202,4 @@ class ReviewDetailView(generics.RetrieveAPIView):
 
     queryset = Review.objects.select_related("booking", "therapist", "customer")
     serializer_class = ReviewListSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsSupervisorOrOwner]
