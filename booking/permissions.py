@@ -23,3 +23,15 @@ class IsAdminOrSupervisorOrOwner(BasePermission):
         # Check if user has the required role
         allowed_roles = ['OWNER', 'SUPERVISOR', 'ADMIN']
         return hasattr(request.user, 'role') and request.user.role in allowed_roles
+
+
+class IsTherapist(BasePermission):
+    """Permission that allows access only to authenticated therapist users."""
+
+    message = "Hanya therapist yang dapat mengakses endpoint ini."
+
+    def has_permission(self, request: Request, view: APIView) -> bool:
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        return hasattr(request.user, 'role') and request.user.role == 'THERAPIST'
