@@ -29,3 +29,66 @@ class Therapist(models.Model):
 
     def __str__(self) -> str:
         return f"{self.name} ({self.license_number or 'no-license'})"
+
+
+class TherapistWeeklyAvailability(models.Model):
+    class DayOfWeek(models.IntegerChoices):
+        MONDAY = 0, 'Monday'
+        TUESDAY = 1, 'Tuesday'
+        WEDNESDAY = 2, 'Wednesday'
+        THURSDAY = 3, 'Thursday'
+        FRIDAY = 4, 'Friday'
+        SATURDAY = 5, 'Saturday'
+        SUNDAY = 6, 'Sunday'
+
+    therapist = models.ForeignKey(
+        Therapist,
+        on_delete=models.CASCADE,
+        related_name='weekly_availabilities',
+    )
+    day_of_week = models.IntegerField(choices=DayOfWeek.choices)
+    start_time = models.TimeField()
+    end_time = models.TimeField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['therapist_id', 'day_of_week', 'start_time']
+        indexes = [
+            models.Index(fields=['therapist', 'day_of_week']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.therapist.name} - {self.get_day_of_week_display()} '
+            f'{self.start_time}-{self.end_time}'
+        )
+
+
+class TherapistDateOverride(models.Model):
+    therapist = models.ForeignKey(
+        Therapist,
+        on_delete=models.CASCADE,
+        related_name='date_overrides',
+    )
+    date = models.DateField()
+    start_time = models.TimeField(blank=True, null=True)
+    end_time = models.TimeField(blank=True, null=True)
+    is_available = models.BooleanField(default=True)
+    note = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['therapist_id', 'date', 'start_time']
+        indexes = [
+            models.Index(fields=['therapist', 'date']),
+            models.Index(fields=['therapist', 'date', 'is_available']),
+        ]
+
+    def __str__(self):
+        if not self.is_available:
+            return f'{self.therapist.name} - {self.date} OFF'
+        return f'{self.therapist.name} - {self.date} {self.start_time}-{self.end_time}'

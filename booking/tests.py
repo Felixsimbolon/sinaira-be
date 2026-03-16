@@ -6,7 +6,7 @@ from rest_framework.test import APITestCase
 
 from accounts.models import User
 from .models import Booking, BookingChangeLog
-from therapist.models import Therapist
+from therapist.models import Therapist, TherapistWeeklyAvailability
 from .utils import (
     sanitize_whatsapp_text,
     normalize_phone,
@@ -645,6 +645,33 @@ class BookingStatusFlowAPITest(APITestCase):
         response = self.client.patch(
             f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
             {'therapist_id': self.admin.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_assign_ditolak_jika_therapist_tidak_available_di_timetable(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        Therapist.objects.create(
+            username=self.therapist.username,
+            name='Therapist Profile For Timetable',
+            email='therapist_profile_timetable@example.com',
+            alamat='Jl. Timetable',
+            kota='Jakarta',
+        )
+        # Booking jam 10:00, slot only covers afternoon.
+        TherapistWeeklyAvailability.objects.create(
+            therapist=Therapist.objects.get(username=self.therapist.username),
+            day_of_week=booking.tgl_treatment.weekday(),
+            start_time='14:00:00',
+            end_time='20:00:00',
+            is_active=True,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.therapist.id},
             format='json',
         )
 

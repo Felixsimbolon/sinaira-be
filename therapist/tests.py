@@ -1,10 +1,11 @@
 from unittest.mock import patch
+from datetime import date, timedelta
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import User
-from therapist.models import Therapist
+from therapist.models import Therapist, TherapistDateOverride, TherapistWeeklyAvailability
 
 
 class TherapistGeocodeAndPhoneAPITest(APITestCase):
@@ -271,3 +272,193 @@ class TherapistGeocodeAndPhoneAPITest(APITestCase):
 		)
 
 		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+
+class TherapistTimetableAPITest(APITestCase):
+	def setUp(self):
+		self.admin = User.objects.create_user(
+			username='timetable_admin',
+			email='timetable_admin@example.com',
+			password='password123',
+			name='Timetable Admin',
+			role=User.Role.ADMIN,
+		)
+		self.non_admin = User.objects.create_user(
+			username='timetable_therapist_actor',
+			email='timetable_therapist_actor@example.com',
+			password='password123',
+			name='Timetable Therapist Actor',
+			role=User.Role.THERAPIST,
+		)
+		self.therapist = Therapist.objects.create(
+			username='timetable_profile',
+			name='Timetable Therapist',
+			email='timetable_profile@example.com',
+			alamat='Jl. Timetable',
+			kota='Jakarta Selatan',
+		)
+
+	def test_create_weekly_slot_valid(self):
+		self.client.force_authenticate(user=self.admin)
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/weekly-schedule/',
+			{
+				'day_of_week': 0,
+				'start_time': '08:00:00',
+				'end_time': '12:00:00',
+				'is_active': True,
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(TherapistWeeklyAvailability.objects.filter(therapist=self.therapist).count(), 1)
+
+	def test_reject_weekly_overlap(self):
+		TherapistWeeklyAvailability.objects.create(
+			therapist=self.therapist,
+			day_of_week=0,
+			start_time='08:00:00',
+			end_time='12:00:00',
+		)
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/weekly-schedule/',
+			{
+				'day_of_week': 0,
+				'start_time': '11:00:00',
+				'end_time': '14:00:00',
+				'is_active': True,
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+	def test_create_date_override_valid(self):
+		self.client.force_authenticate(user=self.admin)
+		target_date = date.today() + timedelta(days=1)
+
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
+			{
+				'date': target_date.isoformat(),
+				'is_available': True,
+				'start_time': '10:00:00',
+				'end_time': '13:00:00',
+				'note': 'Shift khusus',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(TherapistDateOverride.objects.filter(therapist=self.therapist).count(), 1)
+
+	def test_reject_date_override_overlap(self):
+		target_date = date.today() + timedelta(days=1)
+		TherapistDateOverride.objects.create(
+			therapist=self.therapist,
+			date=target_date,
+			is_available=True,
+			start_time='10:00:00',
+			end_time='13:00:00',
+		)
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
+			{
+				'date': target_date.isoformat(),
+				'is_available': True,
+				'start_time': '12:00:00',
+				'end_time': '14:00:00',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+	def test_off_day_override_behavior(self):
+		self.client.force_authenticate(user=self.admin)
+		target_date = date.today() + timedelta(days=2)
+
+		create_response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
+			{
+				'date': target_date.isoformat(),
+				'is_available': False,
+				'note': 'Cuti',
+			},
+			format='json',
+		)
+
+		timetable_response = self.client.get(
+			f'/api/admin/therapists/{self.therapist.id}/timetable/?start_date={target_date.isoformat()}&end_date={target_date.isoformat()}'
+		)
+
+		self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+		self.assertEqual(timetable_response.status_code, status.HTTP_200_OK)
+		result = timetable_response.data['data']['results'][0]
+		self.assertTrue(result['off'])
+		self.assertEqual(result['source'], 'override')
+
+	def test_resolved_timetable_weekly_only(self):
+		TherapistWeeklyAvailability.objects.create(
+			therapist=self.therapist,
+			day_of_week=0,
+			start_time='08:00:00',
+			end_time='12:00:00',
+			is_active=True,
+		)
+		self.client.force_authenticate(user=self.admin)
+
+		start_date = date.today()
+		while start_date.weekday() != 0:
+			start_date += timedelta(days=1)
+
+		response = self.client.get(
+			f'/api/admin/therapists/{self.therapist.id}/timetable/?start_date={start_date.isoformat()}&end_date={start_date.isoformat()}'
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		result = response.data['data']['results'][0]
+		self.assertEqual(result['source'], 'weekly')
+		self.assertFalse(result['off'])
+		self.assertEqual(len(result['slots']), 1)
+
+	def test_resolved_timetable_override_precedence(self):
+		target_date = date.today() + timedelta(days=3)
+		TherapistWeeklyAvailability.objects.create(
+			therapist=self.therapist,
+			day_of_week=target_date.weekday(),
+			start_time='08:00:00',
+			end_time='12:00:00',
+			is_active=True,
+		)
+		TherapistDateOverride.objects.create(
+			therapist=self.therapist,
+			date=target_date,
+			is_available=True,
+			start_time='15:00:00',
+			end_time='18:00:00',
+		)
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.get(
+			f'/api/admin/therapists/{self.therapist.id}/timetable/?start_date={target_date.isoformat()}&end_date={target_date.isoformat()}'
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		result = response.data['data']['results'][0]
+		self.assertEqual(result['source'], 'override')
+		self.assertEqual(result['slots'][0]['start_time'], '15:00:00')
+
+	def test_permission_admin_staff_vs_non_admin(self):
+		self.client.force_authenticate(user=self.non_admin)
+
+		response = self.client.get(
+			f'/api/admin/therapists/{self.therapist.id}/weekly-schedule/'
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)

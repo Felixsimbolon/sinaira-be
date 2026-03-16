@@ -6,6 +6,7 @@ from datetime import date
 import re
 
 from .utils import geocode_location_from_address
+from therapist.utils import is_therapist_user_available_for_booking
 
 User = get_user_model()
 
@@ -323,6 +324,16 @@ class BookingAssignTherapistSerializer(serializers.ModelSerializer):
         if booking.status not in allowed_statuses:
             raise serializers.ValidationError(
                 {'status': 'Therapist hanya dapat di-assign/reassign ketika booking berstatus CONFIRMED atau ASSIGNED.'}
+            )
+
+        therapist = attrs.get('therapist')
+        if therapist and not is_therapist_user_available_for_booking(
+            therapist,
+            booking.tgl_treatment,
+            booking.jam_treatment,
+        ):
+            raise serializers.ValidationError(
+                {'therapist_id': 'Therapist tidak tersedia pada jadwal booking tersebut.'}
             )
 
         return attrs
