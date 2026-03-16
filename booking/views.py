@@ -13,6 +13,7 @@ from .serializers import (
     TherapistBookingStatusUpdateSerializer,
     BookingAssignTherapistSerializer,
     BookingGeocodeSerializer,
+    BookingChangeLogSerializer,
 )
 from .permissions import IsAdminOrSupervisorOrOwner, IsTherapist
 from .utils import (
@@ -413,9 +414,11 @@ class AdminBookingDetailGeocodeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        old_snapshot = booking._get_audit_snapshot()
         booking.latitude = latitude
         booking.longitude = longitude
         booking.save(update_fields=['latitude', 'longitude', 'updated_at'])
+        booking.create_change_logs_from_snapshot(old_snapshot, changed_by=request.user)
 
         return Response(
             {
@@ -425,6 +428,34 @@ class AdminBookingDetailGeocodeView(APIView):
                     'latitude': booking.latitude,
                     'longitude': booking.longitude,
                 }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingChangeLogListView(APIView):
+    """Admin endpoint for viewing booking field-level change logs."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def get(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        logs = booking.change_logs.all()
+        serializer = BookingChangeLogSerializer(logs, many=True)
+        return Response(
+            {
+                'count': logs.count(),
+                'results': serializer.data,
             },
             status=status.HTTP_200_OK
         )

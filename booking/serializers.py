@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Booking
+from .models import Booking, BookingChangeLog
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import date
@@ -167,6 +167,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ['booking_id', 'created_at', 'updated_at']
 
     def update(self, instance, validated_data):
+        old_snapshot = instance._get_audit_snapshot()
         address_fields = {'alamat', 'kelurahan', 'kecamatan', 'kota'}
         should_regeocode = any(field in validated_data for field in address_fields)
 
@@ -179,7 +180,13 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             validated_data['latitude'] = latitude
             validated_data['longitude'] = longitude
 
-        return super().update(instance, validated_data)
+        updated_instance = super().update(instance, validated_data)
+
+        request = self.context.get('request')
+        changed_by = request.user if request and request.user.is_authenticated else None
+        updated_instance.create_change_logs_from_snapshot(old_snapshot, changed_by=changed_by)
+
+        return updated_instance
 
 
 class BookingHistorySerializer(serializers.ModelSerializer):
@@ -235,7 +242,9 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def update(self, instance, validated_data):
-        instance.update_status(validated_data['status'])
+        request = self.context.get('request')
+        changed_by = request.user if request and request.user.is_authenticated else None
+        instance.update_status(validated_data['status'], changed_by=changed_by)
         return instance
 
 
@@ -281,7 +290,9 @@ class TherapistBookingStatusUpdateSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
-        instance.update_status(validated_data['status'])
+        request = self.context.get('request')
+        changed_by = request.user if request and request.user.is_authenticated else None
+        instance.update_status(validated_data['status'], changed_by=changed_by)
         return instance
 
 
@@ -318,8 +329,25 @@ class BookingAssignTherapistSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         therapist = validated_data['therapist']
-        instance.assign_therapist(therapist)
+        request = self.context.get('request')
+        changed_by = request.user if request and request.user.is_authenticated else None
+        instance.assign_therapist(therapist, changed_by=changed_by)
         return instance
+
+
+class BookingChangeLogSerializer(serializers.ModelSerializer):
+    changed_by = TherapistSerializer(read_only=True)
+
+    class Meta:
+        model = BookingChangeLog
+        fields = [
+            'id',
+            'field_name',
+            'old_value',
+            'new_value',
+            'changed_by',
+            'changed_at',
+        ]
 
 
 class BookingGeocodeSerializer(serializers.Serializer):

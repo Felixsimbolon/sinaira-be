@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import User
-from .models import Booking
+from .models import Booking, BookingChangeLog
 from therapist.models import Therapist
 from .utils import (
     sanitize_whatsapp_text,
@@ -1171,3 +1171,212 @@ class BookingGeolocationEndpointAPITest(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class BookingAuditLogAPITest(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='audit_admin',
+            email='audit_admin@example.com',
+            password='password123',
+            name='Audit Admin',
+            role=User.Role.ADMIN,
+        )
+        self.supervisor = User.objects.create_user(
+            username='audit_supervisor',
+            email='audit_supervisor@example.com',
+            password='password123',
+            name='Audit Supervisor',
+            role=User.Role.SUPERVISOR,
+        )
+        self.therapist = User.objects.create_user(
+            username='audit_therapist',
+            email='audit_therapist@example.com',
+            password='password123',
+            name='Audit Therapist',
+            role=User.Role.THERAPIST,
+        )
+        self.other_therapist = User.objects.create_user(
+            username='audit_other_therapist',
+            email='audit_other_therapist@example.com',
+            password='password123',
+            name='Audit Other Therapist',
+            role=User.Role.THERAPIST,
+        )
+
+        self.booking = Booking.objects.create(
+            nama='Audit Customer',
+            alamat='Jl. Audit No. 1',
+            kelurahan='Kelurahan Audit',
+            kecamatan='Kecamatan Audit',
+            kota='Jakarta Selatan',
+            no_hp='081234560000',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(10, 0),
+            perawatan_pilihan='Swedish Massage',
+            aromatherapy_oil=Booking.AromatherapyChoice.LAVENDER,
+            kondisi_khusus='',
+            tahu_dari='Instagram',
+            status=Booking.BookingStatus.PENDING,
+        )
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_update_booking_dengan_perubahan_membuat_log(self, mock_geocode):
+        mock_geocode.return_value = (-6.25, 106.81)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'nama': 'Audit Customer Updated',
+                'kota': 'Depok',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            BookingChangeLog.objects.filter(
+                booking=self.booking,
+                field_name='nama',
+                old_value='Audit Customer',
+                new_value='Audit Customer Updated',
+            ).exists()
+        )
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_log_menyimpan_old_dan_new_value(self, mock_geocode):
+        mock_geocode.return_value = (-6.26, 106.82)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'kota': 'Bandung',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        log = BookingChangeLog.objects.filter(booking=self.booking, field_name='kota').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.old_value, 'Jakarta Selatan')
+        self.assertEqual(log.new_value, 'Bandung')
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_update_tanpa_perubahan_value_tidak_membuat_log(self, mock_geocode):
+        mock_geocode.return_value = (None, None)
+        self.client.force_authenticate(user=self.admin)
+
+        before_count = BookingChangeLog.objects.filter(booking=self.booking).count()
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'nama': self.booking.nama,
+                'alamat': self.booking.alamat,
+                'kelurahan': self.booking.kelurahan,
+                'kecamatan': self.booking.kecamatan,
+                'kota': self.booking.kota,
+                'no_hp': self.booking.no_hp,
+                'tgl_treatment': self.booking.tgl_treatment.isoformat(),
+                'jam_treatment': self.booking.jam_treatment.isoformat(),
+                'perawatan_pilihan': self.booking.perawatan_pilihan,
+                'aromatherapy_oil': self.booking.aromatherapy_oil,
+                'kondisi_khusus': self.booking.kondisi_khusus,
+                'tahu_dari': self.booking.tahu_dari,
+            },
+            format='json',
+        )
+        after_count = BookingChangeLog.objects.filter(booking=self.booking).count()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(before_count, after_count)
+
+    def test_update_status_booking_mencatat_log_status(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/status/',
+            {
+                'status': Booking.BookingStatus.CONFIRMED,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            BookingChangeLog.objects.filter(
+                booking=self.booking,
+                field_name='status',
+                old_value=Booking.BookingStatus.PENDING,
+                new_value=Booking.BookingStatus.CONFIRMED,
+            ).exists()
+        )
+
+    def test_assign_dan_reassign_therapist_mencatat_log_therapist(self):
+        self.client.force_authenticate(user=self.admin)
+        self.booking.status = Booking.BookingStatus.CONFIRMED
+        self.booking.save(update_fields=['status', 'updated_at'])
+
+        assign_response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/assign-therapist/',
+            {
+                'therapist_id': self.therapist.id,
+            },
+            format='json',
+        )
+        reassign_response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/assign-therapist/',
+            {
+                'therapist_id': self.other_therapist.id,
+            },
+            format='json',
+        )
+
+        self.assertEqual(assign_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(reassign_response.status_code, status.HTTP_200_OK)
+        therapist_logs = BookingChangeLog.objects.filter(booking=self.booking, field_name='therapist')
+        self.assertEqual(therapist_logs.count(), 2)
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_changed_by_terisi_jika_request_user_tersedia(self, mock_geocode):
+        mock_geocode.return_value = (-6.30, 106.85)
+        self.client.force_authenticate(user=self.supervisor)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'kota': 'Bogor',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        log = BookingChangeLog.objects.filter(booking=self.booking, field_name='kota').first()
+        self.assertIsNotNone(log)
+        self.assertEqual(log.changed_by_id, self.supervisor.id)
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_endpoint_change_logs_hanya_staff_berwenang(self, mock_geocode):
+        mock_geocode.return_value = (-6.20, 106.80)
+        self.client.force_authenticate(user=self.admin)
+        self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'kota': 'Tangerang',
+            },
+            format='json',
+        )
+
+        admin_response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/change-logs/'
+        )
+        self.client.force_authenticate(user=self.therapist)
+        non_admin_response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/change-logs/'
+        )
+
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        self.assertIn('count', admin_response.data)
+        self.assertIn('results', admin_response.data)
+        self.assertEqual(non_admin_response.status_code, status.HTTP_403_FORBIDDEN)
