@@ -80,14 +80,12 @@ def normalize_phone(phone: str) -> str:
     """
     Normalise a phone-number string:
     - Remove spaces, dashes, parentheses
-    - Convert leading 0 to +62 (Indonesian convention)
-    - Keep leading + sign if present, otherwise keep digits only
+    - Keep leading 0 as-is
+    - Keep leading + sign if present
     """
     phone = re.sub(r"[\s\-().]+", "", phone).strip()
     if not phone:
         return ""
-    if phone.startswith("0"):
-        phone = "+62" + phone[1:]
     return phone
 
 

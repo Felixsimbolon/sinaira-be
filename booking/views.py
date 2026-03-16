@@ -381,6 +381,55 @@ class AdminBookingTherapistsByDistanceView(APIView):
         )
 
 
+class AdminBookingDetailGeocodeView(APIView):
+    """Admin endpoint for manually re-geocoding a booking by booking_id."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def post(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        latitude, longitude = geocode_location_from_address(
+            alamat=booking.alamat or '',
+            kelurahan=booking.kelurahan or '',
+            kecamatan=booking.kecamatan or '',
+            kota=booking.kota or '',
+        )
+
+        if latitude is None or longitude is None:
+            return Response(
+                {
+                    'error': 'Koordinat tidak ditemukan untuk booking ini.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        booking.latitude = latitude
+        booking.longitude = longitude
+        booking.save(update_fields=['latitude', 'longitude', 'updated_at'])
+
+        return Response(
+            {
+                'message': 'Booking geocode updated successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'latitude': booking.latitude,
+                    'longitude': booking.longitude,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
 class TherapistBookingStatusUpdateView(APIView):
     """Therapist endpoint for updating CHECKED_IN and CHECKED_OUT status."""
 

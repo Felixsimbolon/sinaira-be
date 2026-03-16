@@ -5,7 +5,27 @@ from django.utils import timezone
 from datetime import date
 import re
 
+from .utils import geocode_location_from_address
+
 User = get_user_model()
+
+
+def _has_minimum_address_for_geocode(alamat, kelurahan, kecamatan, kota):
+    has_area = bool((alamat or '').strip() or (kelurahan or '').strip() or (kecamatan or '').strip())
+    has_city = bool((kota or '').strip())
+    return has_area and has_city
+
+
+def _resolve_geocode(alamat, kelurahan, kecamatan, kota):
+    if not _has_minimum_address_for_geocode(alamat, kelurahan, kecamatan, kota):
+        return None, None
+
+    return geocode_location_from_address(
+        alamat=alamat or '',
+        kelurahan=kelurahan or '',
+        kecamatan=kecamatan or '',
+        kota=kota or '',
+    )
 
 
 class BookingCreateSerializer(serializers.ModelSerializer):
@@ -23,8 +43,6 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'kelurahan',
             'kecamatan',
             'kota',
-            'latitude',
-            'longitude',
             'no_hp',
             'tgl_treatment',
             'jam_treatment',
@@ -62,6 +80,15 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             # Since staff users have roles, we don't link staff bookings
             if not hasattr(request.user, 'role'):
                 validated_data['user'] = request.user
+
+        latitude, longitude = _resolve_geocode(
+            validated_data.get('alamat'),
+            validated_data.get('kelurahan'),
+            validated_data.get('kecamatan'),
+            validated_data.get('kota'),
+        )
+        validated_data['latitude'] = latitude
+        validated_data['longitude'] = longitude
         
         return super().create(validated_data)
 
@@ -138,6 +165,21 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['booking_id', 'created_at', 'updated_at']
+
+    def update(self, instance, validated_data):
+        address_fields = {'alamat', 'kelurahan', 'kecamatan', 'kota'}
+        should_regeocode = any(field in validated_data for field in address_fields)
+
+        if should_regeocode:
+            alamat = validated_data.get('alamat', instance.alamat)
+            kelurahan = validated_data.get('kelurahan', instance.kelurahan)
+            kecamatan = validated_data.get('kecamatan', instance.kecamatan)
+            kota = validated_data.get('kota', instance.kota)
+            latitude, longitude = _resolve_geocode(alamat, kelurahan, kecamatan, kota)
+            validated_data['latitude'] = latitude
+            validated_data['longitude'] = longitude
+
+        return super().update(instance, validated_data)
 
 
 class BookingHistorySerializer(serializers.ModelSerializer):

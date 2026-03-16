@@ -11,6 +11,7 @@ class Therapist(models.Model):
     years_experience = models.PositiveIntegerField(default=0)
     consultation_rate = models.PositiveIntegerField(default=0)
     alamat = models.TextField(help_text="Therapist address")
+    no_hp = models.CharField(max_length=20, blank=True, default="", db_index=True)
     kota = models.CharField(max_length=100, blank=True, null=True)
     kelurahan = models.CharField(max_length=100, blank=True, null=True)
     kecamatan = models.CharField(max_length=100, blank=True, null=True)

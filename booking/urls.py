@@ -9,6 +9,7 @@ from .views import (
     AdminAssignTherapistView,
     AdminBookingGeocodeView,
     AdminBookingTherapistsByDistanceView,
+    AdminBookingDetailGeocodeView,
     TherapistBookingStatusUpdateView,
     ParseWhatsAppMessageView,
 )
@@ -32,6 +33,9 @@ urlpatterns = [
 
     # Geocode booking address fields (POST)
     path('admin/bookings/geocode/', AdminBookingGeocodeView.as_view(), name='admin-booking-geocode'),
+
+    # Re-geocode a booking detail by booking_id (POST)
+    path('admin/bookings/<str:booking_id>/geocode/', AdminBookingDetailGeocodeView.as_view(), name='admin-booking-detail-geocode'),
     
     # Get/Update booking detail by booking_id (GET, PUT, PATCH)
     path('admin/bookings/<str:booking_id>/', AdminBookingDetailView.as_view(), name='admin-booking-detail'),

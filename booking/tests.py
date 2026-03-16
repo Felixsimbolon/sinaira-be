@@ -39,11 +39,11 @@ class SanitizeWhatsAppTextTest(TestCase):
 
 
 class NormalizePhoneTest(TestCase):
-    def test_converts_leading_zero_to_plus62(self):
-        self.assertEqual(normalize_phone("08123456789"), "+628123456789")
+    def test_keeps_leading_zero(self):
+        self.assertEqual(normalize_phone("08123456789"), "08123456789")
 
     def test_removes_spaces_and_dashes(self):
-        self.assertEqual(normalize_phone("0812 3456-789"), "+628123456789")
+        self.assertEqual(normalize_phone("0812 3456-789"), "08123456789")
 
     def test_keeps_plus62_prefix(self):
         self.assertEqual(normalize_phone("+628123456789"), "+628123456789")
@@ -52,7 +52,7 @@ class NormalizePhoneTest(TestCase):
         self.assertEqual(normalize_phone(""), "")
 
     def test_removes_parentheses(self):
-        self.assertEqual(normalize_phone("(0812)3456789"), "+6281234567 89".replace(" ", ""))
+        self.assertEqual(normalize_phone("(0812)3456789"), "08123456789")
 
 
 class NormalizeAromatherapyTest(TestCase):
@@ -148,7 +148,7 @@ class ExtractBookingFromWhatsAppMessageTest(TestCase):
         result = extract_booking_from_whatsapp_message(_STANDARD_MESSAGE)
         self.assertEqual(result["nama"], "Budi Santoso")
         self.assertEqual(result["kota"], "Jakarta Selatan")
-        self.assertEqual(result["no_hp"], "+628123456789")
+        self.assertEqual(result["no_hp"], "08123456789")
         self.assertEqual(result["tgl_treatment"], "15 Maret 2026")
         self.assertEqual(result["jam_treatment"], "10.00")
         self.assertEqual(result["perawatan_pilihan"], "Swedish Massage")
@@ -194,7 +194,7 @@ class ExtractBookingFromWhatsAppMessageTest(TestCase):
 
     def test_phone_normalised(self):
         result = extract_booking_from_whatsapp_message(_BOLD_ITALIC_MESSAGE)
-        self.assertEqual(result["no_hp"], "+6285612345678")
+        self.assertEqual(result["no_hp"], "085612345678")
 
 
 class BookingStatusFlowAPITest(APITestCase):
@@ -786,6 +786,209 @@ class BookingGeolocationTest(TestCase):
 
         with self.assertRaises(ValueError):
             get_distances_to_therapists_in_same_city(booking)
+
+
+class BookingAutoGeocodeAPITest(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='booking_geo_admin',
+            email='booking_geo_admin@example.com',
+            password='password123',
+            name='Booking Geo Admin',
+            role=User.Role.ADMIN,
+        )
+        self.therapist_user = User.objects.create_user(
+            username='booking_geo_therapist',
+            email='booking_geo_therapist@example.com',
+            password='password123',
+            name='Booking Geo Therapist',
+            role=User.Role.THERAPIST,
+        )
+
+        self.booking = Booking.objects.create(
+            nama='Auto Geo Customer',
+            alamat='Jl. Auto Geo No. 1',
+            kelurahan='Kelurahan Lama',
+            kecamatan='Kecamatan Lama',
+            kota='Jakarta Selatan',
+            no_hp='081234567811',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(10, 0),
+            perawatan_pilihan='Swedish Massage',
+            aromatherapy_oil=Booking.AromatherapyChoice.LAVENDER,
+            latitude=-6.20,
+            longitude=106.80,
+            status=Booking.BookingStatus.PENDING,
+        )
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_create_booking_auto_geocode_sukses(self, mock_geocode):
+        mock_geocode.return_value = (-6.25, 106.82)
+
+        response = self.client.post(
+            '/api/bookings/',
+            {
+                'nama': 'Create Auto Geocode',
+                'alamat': 'Jl. Baru No. 1',
+                'kelurahan': 'Kelurahan Baru',
+                'kecamatan': 'Kecamatan Baru',
+                'kota': 'Jakarta Selatan',
+                'no_hp': '081234567812',
+                'tgl_treatment': (date.today() + timedelta(days=1)).isoformat(),
+                'jam_treatment': '09:30:00',
+                'perawatan_pilihan': 'Deep Tissue',
+                'aromatherapy_oil': Booking.AromatherapyChoice.ROSE,
+                'latitude': -1.0,
+                'longitude': 100.0,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created = Booking.objects.get(booking_id=response.data['data']['booking_id'])
+        self.assertEqual(created.latitude, -6.25)
+        self.assertEqual(created.longitude, 106.82)
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_create_booking_auto_geocode_gagal_tetap_sukses(self, mock_geocode):
+        mock_geocode.return_value = (None, None)
+
+        response = self.client.post(
+            '/api/bookings/',
+            {
+                'nama': 'Create Auto Geocode Fail',
+                'alamat': 'Alamat Tidak Dikenal',
+                'kelurahan': 'Kelurahan Tidak Dikenal',
+                'kecamatan': 'Kecamatan Tidak Dikenal',
+                'kota': 'Jakarta Selatan',
+                'no_hp': '081234567813',
+                'tgl_treatment': (date.today() + timedelta(days=1)).isoformat(),
+                'jam_treatment': '10:30:00',
+                'perawatan_pilihan': 'Reflexology',
+                'aromatherapy_oil': Booking.AromatherapyChoice.JASMINE,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        created = Booking.objects.get(booking_id=response.data['data']['booking_id'])
+        self.assertIsNone(created.latitude)
+        self.assertIsNone(created.longitude)
+
+    def test_latitude_longitude_tidak_wajib_saat_create(self):
+        response = self.client.post(
+            '/api/bookings/',
+            {
+                'nama': 'Create Without LatLng',
+                'alamat': 'Jl. Tanpa LatLng',
+                'kota': 'Jakarta Selatan',
+                'no_hp': '081234567814',
+                'tgl_treatment': (date.today() + timedelta(days=1)).isoformat(),
+                'jam_treatment': '11:00:00',
+                'perawatan_pilihan': 'Deep Tissue',
+                'aromatherapy_oil': Booking.AromatherapyChoice.ROSE,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_update_alamat_booking_auto_geocode_ulang(self, mock_geocode):
+        mock_geocode.return_value = (-6.31, 106.77)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'alamat': 'Jl. Updated No. 2',
+                'kelurahan': 'Kelurahan Updated',
+                'kecamatan': 'Kecamatan Updated',
+                'kota': 'Depok',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.latitude, -6.31)
+        self.assertEqual(self.booking.longitude, 106.77)
+
+    @patch('booking.serializers.geocode_location_from_address')
+    def test_update_alamat_booking_auto_geocode_gagal_graceful(self, mock_geocode):
+        mock_geocode.return_value = (None, None)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'alamat': 'Alamat Tidak Dikenal',
+                'kota': 'Depok',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.booking.refresh_from_db()
+        self.assertIsNone(self.booking.latitude)
+        self.assertIsNone(self.booking.longitude)
+
+    def test_latitude_longitude_bisa_diedit_saat_update(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{self.booking.booking_id}/',
+            {
+                'latitude': -6.45,
+                'longitude': 107.01,
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.latitude, -6.45)
+        self.assertEqual(self.booking.longitude, 107.01)
+
+    @patch('booking.views.geocode_location_from_address')
+    def test_manual_geocode_trigger_booking_detail_success(self, mock_geocode):
+        mock_geocode.return_value = (-6.21, 106.79)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            f'/api/admin/bookings/{self.booking.booking_id}/geocode/',
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.booking.refresh_from_db()
+        self.assertEqual(self.booking.latitude, -6.21)
+        self.assertEqual(self.booking.longitude, 106.79)
+
+    @patch('booking.views.geocode_location_from_address')
+    def test_manual_geocode_trigger_booking_detail_gagal_graceful(self, mock_geocode):
+        mock_geocode.return_value = (None, None)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.post(
+            f'/api/admin/bookings/{self.booking.booking_id}/geocode/',
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_manual_geocode_trigger_booking_detail_forbidden_non_admin(self):
+        self.client.force_authenticate(user=self.therapist_user)
+
+        response = self.client.post(
+            f'/api/admin/bookings/{self.booking.booking_id}/geocode/',
+            {},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class BookingGeolocationEndpointAPITest(APITestCase):
