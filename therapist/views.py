@@ -15,7 +15,13 @@ from .serializers import (
     TherapistSerializer,
     TherapistWeeklyAvailabilitySerializer,
 )
-from .utils import resolve_therapist_schedule_range
+from .utils import (
+    DEFAULT_AVAILABLE_END_TIME,
+    DEFAULT_AVAILABLE_START_TIME,
+    GRID_END_TIME,
+    GRID_START_TIME,
+    resolve_therapist_schedule_range,
+)
 
 
 class TherapistViewSet(viewsets.ModelViewSet):
@@ -380,6 +386,8 @@ class AdminTherapistTimetableView(APIView):
                         {
                             'start_time': slot['start_time'].strftime('%H:%M:%S'),
                             'end_time': slot['end_time'].strftime('%H:%M:%S'),
+                            'status': slot['status'],
+                            'source': slot['source'],
                         }
                         for slot in item['slots']
                     ],
@@ -393,6 +401,12 @@ class AdminTherapistTimetableView(APIView):
                     'therapist_id': therapist.id,
                     'start_date': start_date.isoformat(),
                     'end_date': end_date.isoformat(),
+                    'time_window': {
+                        'grid_start': GRID_START_TIME.strftime('%H:%M:%S'),
+                        'grid_end': GRID_END_TIME.strftime('%H:%M:%S'),
+                        'default_available_start': DEFAULT_AVAILABLE_START_TIME.strftime('%H:%M:%S'),
+                        'default_available_end': DEFAULT_AVAILABLE_END_TIME.strftime('%H:%M:%S'),
+                    },
                     'results': results,
                 },
             },

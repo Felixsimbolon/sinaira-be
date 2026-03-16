@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from datetime import time
 
 from booking.utils import geocode_location_from_address
 
@@ -112,6 +113,9 @@ class TherapistSerializer(BaseTherapistSerializer):
 
 
 class TherapistWeeklyAvailabilitySerializer(serializers.ModelSerializer):
+    GRID_START_TIME = time(7, 0)
+    GRID_END_TIME = time(20, 0)
+
     class Meta:
         model = TherapistWeeklyAvailability
         fields = [
@@ -149,6 +153,11 @@ class TherapistWeeklyAvailabilitySerializer(serializers.ModelSerializer):
                 {'time': 'start_time harus lebih kecil dari end_time.'}
             )
 
+        if start_time < self.GRID_START_TIME or end_time > self.GRID_END_TIME:
+            raise serializers.ValidationError(
+                {'time': 'Slot jadwal harus berada dalam rentang 07:00-20:00.'}
+            )
+
         overlap_qs = TherapistWeeklyAvailability.objects.filter(
             therapist=therapist,
             day_of_week=day_of_week,
@@ -172,6 +181,9 @@ class TherapistWeeklyAvailabilitySerializer(serializers.ModelSerializer):
 
 
 class TherapistDateOverrideSerializer(serializers.ModelSerializer):
+    GRID_START_TIME = time(7, 0)
+    GRID_END_TIME = time(20, 0)
+
     class Meta:
         model = TherapistDateOverride
         fields = [
@@ -180,7 +192,8 @@ class TherapistDateOverrideSerializer(serializers.ModelSerializer):
             'date',
             'start_time',
             'end_time',
-            'is_available',
+            'override_type',
+            'is_active',
             'note',
             'created_at',
             'updated_at',
@@ -197,39 +210,30 @@ class TherapistDateOverrideSerializer(serializers.ModelSerializer):
             therapist = instance.therapist
 
         target_date = attrs.get('date', instance.date if instance else None)
-        is_available = attrs.get('is_available', instance.is_available if instance else True)
+        override_type = attrs.get(
+            'override_type',
+            instance.override_type if instance else TherapistDateOverride.OverrideType.UNAVAILABLE,
+        )
         start_time = attrs.get('start_time', instance.start_time if instance else None)
         end_time = attrs.get('end_time', instance.end_time if instance else None)
+        is_active = attrs.get('is_active', instance.is_active if instance else True)
 
-        off_qs = TherapistDateOverride.objects.filter(
+        same_type_qs = TherapistDateOverride.objects.filter(
             therapist=therapist,
             date=target_date,
-            is_available=False,
-        )
-        available_qs = TherapistDateOverride.objects.filter(
-            therapist=therapist,
-            date=target_date,
-            is_available=True,
+            override_type=override_type,
+            is_active=True,
         )
 
         if instance is not None:
-            off_qs = off_qs.exclude(id=instance.id)
-            available_qs = available_qs.exclude(id=instance.id)
+            same_type_qs = same_type_qs.exclude(id=instance.id)
 
-        if not is_available:
-            if start_time is not None or end_time is not None:
-                raise serializers.ValidationError(
-                    {'time': 'start_time dan end_time harus kosong jika is_available = false.'}
-                )
-            if available_qs.exists():
-                raise serializers.ValidationError(
-                    {'date': 'Tidak bisa menambahkan off-day jika slot available pada tanggal tersebut sudah ada.'}
-                )
+        if not is_active:
             return attrs
 
         if start_time is None or end_time is None:
             raise serializers.ValidationError(
-                {'time': 'start_time dan end_time wajib diisi jika is_available = true.'}
+                {'time': 'start_time dan end_time wajib diisi.'}
             )
 
         if start_time >= end_time:
@@ -237,12 +241,12 @@ class TherapistDateOverrideSerializer(serializers.ModelSerializer):
                 {'time': 'start_time harus lebih kecil dari end_time.'}
             )
 
-        if off_qs.exists():
+        if start_time < self.GRID_START_TIME or end_time > self.GRID_END_TIME:
             raise serializers.ValidationError(
-                {'date': 'Tanggal ini sudah ditandai off-day.'}
+                {'time': 'Slot override harus berada dalam rentang 07:00-20:00.'}
             )
 
-        overlap_qs = available_qs.filter(
+        overlap_qs = same_type_qs.filter(
             start_time__lt=end_time,
             end_time__gt=start_time,
         )

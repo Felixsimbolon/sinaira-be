@@ -68,6 +68,10 @@ class TherapistWeeklyAvailability(models.Model):
 
 
 class TherapistDateOverride(models.Model):
+    class OverrideType(models.TextChoices):
+        AVAILABLE = 'AVAILABLE', 'Available'
+        UNAVAILABLE = 'UNAVAILABLE', 'Unavailable'
+
     therapist = models.ForeignKey(
         Therapist,
         on_delete=models.CASCADE,
@@ -76,7 +80,12 @@ class TherapistDateOverride(models.Model):
     date = models.DateField()
     start_time = models.TimeField(blank=True, null=True)
     end_time = models.TimeField(blank=True, null=True)
-    is_available = models.BooleanField(default=True)
+    override_type = models.CharField(
+        max_length=20,
+        choices=OverrideType.choices,
+        default=OverrideType.UNAVAILABLE,
+    )
+    is_active = models.BooleanField(default=True)
     note = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -85,10 +94,12 @@ class TherapistDateOverride(models.Model):
         ordering = ['therapist_id', 'date', 'start_time']
         indexes = [
             models.Index(fields=['therapist', 'date']),
-            models.Index(fields=['therapist', 'date', 'is_available']),
+            models.Index(fields=['therapist', 'date', 'override_type']),
+            models.Index(fields=['is_active']),
         ]
 
     def __str__(self):
-        if not self.is_available:
-            return f'{self.therapist.name} - {self.date} OFF'
-        return f'{self.therapist.name} - {self.date} {self.start_time}-{self.end_time}'
+        return (
+            f'{self.therapist.name} - {self.date} '
+            f'{self.override_type} {self.start_time}-{self.end_time}'
+        )

@@ -344,7 +344,7 @@ class TherapistTimetableAPITest(APITestCase):
 			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
 			{
 				'date': target_date.isoformat(),
-				'is_available': True,
+				'override_type': 'AVAILABLE',
 				'start_time': '10:00:00',
 				'end_time': '13:00:00',
 				'note': 'Shift khusus',
@@ -360,7 +360,7 @@ class TherapistTimetableAPITest(APITestCase):
 		TherapistDateOverride.objects.create(
 			therapist=self.therapist,
 			date=target_date,
-			is_available=True,
+			override_type='AVAILABLE',
 			start_time='10:00:00',
 			end_time='13:00:00',
 		)
@@ -370,7 +370,7 @@ class TherapistTimetableAPITest(APITestCase):
 			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
 			{
 				'date': target_date.isoformat(),
-				'is_available': True,
+				'override_type': 'AVAILABLE',
 				'start_time': '12:00:00',
 				'end_time': '14:00:00',
 			},
@@ -379,7 +379,7 @@ class TherapistTimetableAPITest(APITestCase):
 
 		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
-	def test_off_day_override_behavior(self):
+	def test_unavailable_partial_override_behavior(self):
 		self.client.force_authenticate(user=self.admin)
 		target_date = date.today() + timedelta(days=2)
 
@@ -387,8 +387,10 @@ class TherapistTimetableAPITest(APITestCase):
 			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
 			{
 				'date': target_date.isoformat(),
-				'is_available': False,
-				'note': 'Cuti',
+				'override_type': 'UNAVAILABLE',
+				'start_time': '13:00:00',
+				'end_time': '15:00:00',
+				'note': 'Absen parsial',
 			},
 			format='json',
 		)
@@ -400,8 +402,34 @@ class TherapistTimetableAPITest(APITestCase):
 		self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
 		self.assertEqual(timetable_response.status_code, status.HTTP_200_OK)
 		result = timetable_response.data['data']['results'][0]
-		self.assertTrue(result['off'])
 		self.assertEqual(result['source'], 'override')
+		self.assertFalse(result['off'])
+		unavailable_slots = [slot for slot in result['slots'] if slot['status'] == 'unavailable']
+		self.assertEqual(len(unavailable_slots), 1)
+		self.assertEqual(unavailable_slots[0]['start_time'], '13:00:00')
+		self.assertEqual(unavailable_slots[0]['end_time'], '15:00:00')
+
+	def test_resolved_timetable_fallback_default_09_19(self):
+		self.client.force_authenticate(user=self.admin)
+		target_date = date.today() + timedelta(days=4)
+
+		response = self.client.get(
+			f'/api/admin/therapists/{self.therapist.id}/timetable/?start_date={target_date.isoformat()}&end_date={target_date.isoformat()}'
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		data = response.data['data']
+		self.assertEqual(data['time_window']['grid_start'], '07:00:00')
+		self.assertEqual(data['time_window']['grid_end'], '20:00:00')
+		self.assertEqual(data['time_window']['default_available_start'], '09:00:00')
+		self.assertEqual(data['time_window']['default_available_end'], '19:00:00')
+
+		result = data['results'][0]
+		self.assertEqual(result['source'], 'default')
+		available_slots = [slot for slot in result['slots'] if slot['status'] == 'available']
+		self.assertEqual(len(available_slots), 1)
+		self.assertEqual(available_slots[0]['start_time'], '09:00:00')
+		self.assertEqual(available_slots[0]['end_time'], '19:00:00')
 
 	def test_resolved_timetable_weekly_only(self):
 		TherapistWeeklyAvailability.objects.create(
@@ -425,23 +453,24 @@ class TherapistTimetableAPITest(APITestCase):
 		result = response.data['data']['results'][0]
 		self.assertEqual(result['source'], 'weekly')
 		self.assertFalse(result['off'])
-		self.assertEqual(len(result['slots']), 1)
+		available_slots = [slot for slot in result['slots'] if slot['status'] == 'available']
+		self.assertEqual(len(available_slots), 1)
 
 	def test_resolved_timetable_override_precedence(self):
 		target_date = date.today() + timedelta(days=3)
 		TherapistWeeklyAvailability.objects.create(
 			therapist=self.therapist,
 			day_of_week=target_date.weekday(),
-			start_time='08:00:00',
-			end_time='12:00:00',
+			start_time='09:00:00',
+			end_time='19:00:00',
 			is_active=True,
 		)
 		TherapistDateOverride.objects.create(
 			therapist=self.therapist,
 			date=target_date,
-			is_available=True,
-			start_time='15:00:00',
-			end_time='18:00:00',
+			override_type='UNAVAILABLE',
+			start_time='13:00:00',
+			end_time='15:00:00',
 		)
 		self.client.force_authenticate(user=self.admin)
 
@@ -452,7 +481,16 @@ class TherapistTimetableAPITest(APITestCase):
 		self.assertEqual(response.status_code, status.HTTP_200_OK)
 		result = response.data['data']['results'][0]
 		self.assertEqual(result['source'], 'override')
-		self.assertEqual(result['slots'][0]['start_time'], '15:00:00')
+		available_slots = [slot for slot in result['slots'] if slot['status'] == 'available']
+		unavailable_slots = [slot for slot in result['slots'] if slot['status'] == 'unavailable']
+		self.assertEqual(len(available_slots), 2)
+		self.assertEqual(available_slots[0]['start_time'], '09:00:00')
+		self.assertEqual(available_slots[0]['end_time'], '13:00:00')
+		self.assertEqual(available_slots[1]['start_time'], '15:00:00')
+		self.assertEqual(available_slots[1]['end_time'], '19:00:00')
+		self.assertEqual(len(unavailable_slots), 1)
+		self.assertEqual(unavailable_slots[0]['start_time'], '13:00:00')
+		self.assertEqual(unavailable_slots[0]['end_time'], '15:00:00')
 
 	def test_permission_admin_staff_vs_non_admin(self):
 		self.client.force_authenticate(user=self.non_admin)
