@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import User
+from layanan.models import Layanan, LayananKategori
 from .models import Booking, BookingChangeLog
 from therapist.models import Therapist, TherapistWeeklyAvailability
 from .utils import (
@@ -358,7 +359,7 @@ class BookingStatusFlowAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_admin_bisa_assign_therapist_saat_confirmed(self):
-        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        booking = self._create_booking(status_value=Booking.BookingStatus.PAID)
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.patch(
@@ -372,7 +373,7 @@ class BookingStatusFlowAPITest(APITestCase):
         self.assertEqual(booking.therapist_id, self.therapist.id)
 
     def test_assign_therapist_mengubah_status_menjadi_assigned(self):
-        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        booking = self._create_booking(status_value=Booking.BookingStatus.PAID)
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.patch(
@@ -614,6 +615,51 @@ class BookingStatusFlowAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_admin_harus_isi_total_pembayaran_dan_harga_saat_confirmed_ke_paid(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/status/',
+            {'status': Booking.BookingStatus.PAID},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('total_pembayaran', response.data)
+
+    def test_admin_bisa_ubah_confirmed_ke_paid_jika_nominal_diisi(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/status/',
+            {
+                'status': Booking.BookingStatus.PAID,
+                'harga': '250000.00',
+                'total_pembayaran': '275000.00',
+            },
+            format='json',
+        )
+
+        booking.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking.status, Booking.BookingStatus.PAID)
+        self.assertEqual(str(booking.harga), '250000.00')
+        self.assertEqual(str(booking.total_pembayaran), '275000.00')
+
+    def test_admin_tidak_bisa_assign_therapist_saat_status_confirmed(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.therapist.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_booking_completed_tidak_bisa_assign_atau_reassign_therapist(self):
         booking = self._create_booking(status_value=Booking.BookingStatus.COMPLETED, therapist=self.therapist)
         self.client.force_authenticate(user=self.admin)
@@ -676,6 +722,95 @@ class BookingStatusFlowAPITest(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class BookingCreateAndAdminListFlowAPITest(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='admin_list_user',
+            email='admin_list@example.com',
+            password='password123',
+            name='Admin List User',
+            role=User.Role.ADMIN,
+        )
+        self.kategori = LayananKategori.objects.create(nama='Massage')
+        self.swedish = Layanan.objects.create(
+            kategori=self.kategori,
+            nama='Swedish Massage',
+            durasi_menit=60,
+            harga=180000,
+            is_active=True,
+        )
+        self.deep_tissue = Layanan.objects.create(
+            kategori=self.kategori,
+            nama='Deep Tissue',
+            durasi_menit=60,
+            harga=220000,
+            is_active=True,
+        )
+
+    def test_booking_create_public_tersimpan_dan_muncul_di_admin_list(self):
+        create_payload = {
+            'nama': 'Customer Booking List',
+            'alamat': 'Jl. Melati No. 3',
+            'kota': 'Serang',
+            'kode_pos': '42111',
+            'no_hp': '081234567890',
+            'tgl_treatment': (date.today() + timedelta(days=1)).isoformat(),
+            'jam_treatment': '14:30:00',
+            'perawatan_pilihan': 'Swedish Massage',
+            'aromatherapy_oil': Booking.AromatherapyChoice.JASMINE,
+            'kondisi_khusus': '',
+            'tahu_dari': 'Instagram',
+        }
+
+        create_response = self.client.post('/api/bookings/', create_payload, format='json')
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        booking_id = create_response.data['data']['booking_id']
+        self.assertTrue(Booking.objects.filter(booking_id=booking_id).exists())
+
+        self.client.force_authenticate(user=self.admin)
+        list_response = self.client.get('/api/admin/bookings/', format='json')
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+
+        returned_ids = [item['booking_id'] for item in list_response.data.get('results', [])]
+        self.assertIn(booking_id, returned_ids)
+
+    def test_booking_create_auto_set_harga_dari_layanan(self):
+        create_payload = {
+            'nama': 'Customer Auto Harga',
+            'alamat': 'Jl. Anggrek No. 4',
+            'kota': 'Serang',
+            'kode_pos': '42111',
+            'no_hp': '081234567891',
+            'tgl_treatment': (date.today() + timedelta(days=1)).isoformat(),
+            'jam_treatment': '15:00:00',
+            'perawatan_pilihan': 'Swedish Massage, Deep Tissue',
+            'aromatherapy_oil': Booking.AromatherapyChoice.JASMINE,
+            'kondisi_khusus': '',
+            'tahu_dari': 'Instagram',
+        }
+
+        create_response = self.client.post('/api/bookings/', create_payload, format='json')
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+
+        booking_id = create_response.data['data']['booking_id']
+        created_booking = Booking.objects.get(booking_id=booking_id)
+        self.assertEqual(float(created_booking.harga), float(self.swedish.harga + self.deep_tissue.harga))
+
+        self.client.force_authenticate(user=self.admin)
+
+        detail_response = self.client.get(f'/api/admin/bookings/{booking_id}/', format='json')
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(float(detail_response.data['harga']), float(self.swedish.harga + self.deep_tissue.harga))
+
+        list_response = self.client.get('/api/admin/bookings/', format='json')
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        booking_item = next(
+            item for item in list_response.data.get('results', []) if item['booking_id'] == booking_id
+        )
+        self.assertEqual(float(booking_item['harga']), float(self.swedish.harga + self.deep_tissue.harga))
 
 
 class BookingGeolocationTest(TestCase):
@@ -830,6 +965,29 @@ class BookingAutoGeocodeAPITest(APITestCase):
             password='password123',
             name='Booking Geo Therapist',
             role=User.Role.THERAPIST,
+        )
+
+        kategori = LayananKategori.objects.create(nama='Body Treatment')
+        Layanan.objects.create(
+            kategori=kategori,
+            nama='Swedish Massage',
+            durasi_menit=60,
+            harga=180000,
+            is_active=True,
+        )
+        Layanan.objects.create(
+            kategori=kategori,
+            nama='Deep Tissue',
+            durasi_menit=60,
+            harga=220000,
+            is_active=True,
+        )
+        Layanan.objects.create(
+            kategori=kategori,
+            nama='Reflexology',
+            durasi_menit=60,
+            harga=190000,
+            is_active=True,
         )
 
         self.booking = Booking.objects.create(
