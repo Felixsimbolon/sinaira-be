@@ -4,7 +4,6 @@ from django.db import transaction
 from datetime import date, datetime, time
 import random
 import string
-import secrets
 
 
 def generate_booking_id():
@@ -181,15 +180,6 @@ class Booking(models.Model):
         help_text="Applied voucher code for this booking"
     )
 
-    review_token = models.CharField(
-        max_length=128,
-        unique=True,
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text="Secure token used in QR link for customer review"
-    )
-
     # Booking metadata
     status = models.CharField(
         max_length=20,
@@ -212,15 +202,6 @@ class Booking(models.Model):
     def __str__(self):
         return f"{self.booking_id} - {self.nama} - {self.tgl_treatment}"
 
-    def generate_review_token(self, save: bool = True) -> str:
-        """Generate a unique token for public review links."""
-        while True:
-            token = secrets.token_urlsafe(32)
-            if not Booking.objects.filter(review_token=token).exists():
-                self.review_token = token
-                if save:
-                    self.save(update_fields=['review_token', 'updated_at'])
-                return token
     def _get_audit_snapshot(self) -> dict:
         """Return tracked booking values before mutation."""
         excluded_fields = {'id', 'booking_id', 'created_at', 'updated_at'}
