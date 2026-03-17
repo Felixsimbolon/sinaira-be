@@ -34,13 +34,14 @@ class AllowAnyPermission(permissions.BasePermission):
 class BookingFilter(FilterSet):
     """Custom filter for bookings."""
     status = CharFilter(field_name='status', lookup_expr='iexact')
+    kota = CharFilter(field_name='kota', lookup_expr='iexact')
     tgl_treatment = DateFilter(field_name='tgl_treatment')
     tgl_treatment_from = DateFilter(field_name='tgl_treatment', lookup_expr='gte')
     tgl_treatment_to = DateFilter(field_name='tgl_treatment', lookup_expr='lte')
 
     class Meta:
         model = Booking
-        fields = ['status', 'tgl_treatment', 'tgl_treatment_from', 'tgl_treatment_to']
+        fields = ['status', 'kota', 'tgl_treatment', 'tgl_treatment_from', 'tgl_treatment_to']
 
 
 # ──────────────────────────────────────────────────────────────────
