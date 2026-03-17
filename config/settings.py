@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     'review',
     'inventory',
     'membership',
+    'layanan',
 ]
 
 MIDDLEWARE = [

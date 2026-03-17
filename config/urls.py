@@ -28,4 +28,5 @@ urlpatterns = [
     path('api/', include('booking.urls')),
     path('api/', include('review.urls')),
     path('api/', include('dashboard.urls')),
+    path('api/', include('layanan.urls')),
 ]

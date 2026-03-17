@@ -10,9 +10,19 @@ from .serializers import (
     BookingCreateSerializer,
     BookingListSerializer,
     BookingDetailSerializer,
-    BookingHistorySerializer
+    BookingHistorySerializer,
+    BookingStatusUpdateSerializer,
+    TherapistBookingStatusUpdateSerializer,
+    BookingAssignTherapistSerializer,
+    BookingGeocodeSerializer,
+    BookingChangeLogSerializer,
 )
-from .permissions import IsAdminOrSupervisorOrOwner
+from .permissions import IsAdminOrSupervisorOrOwner, IsTherapist
+from .utils import (
+    extract_booking_from_whatsapp_message,
+    geocode_location_from_address,
+    get_assignable_therapists_by_distance,
+)
 
 
 class AllowAnyPermission(permissions.BasePermission):
@@ -232,8 +242,25 @@ class AdminBookingReviewLinkView(APIView):
 
     def update(self, request, *args, **kwargs):
         try:
-            partial = kwargs.pop('partial', False)
             instance = self.get_object()
+
+            if instance.status != Booking.BookingStatus.PENDING:
+                return Response(
+                    {
+                        'error': 'Booking hanya dapat di-update penuh ketika status masih PENDING.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if any(field in request.data for field in ['status', 'therapist', 'therapist_id']):
+                return Response(
+                    {
+                        'error': 'Update status atau therapist harus menggunakan endpoint khusus.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            partial = kwargs.pop('partial', False)
             serializer = self.get_serializer(instance, data=request.data, partial=partial)
             serializer.is_valid(raise_exception=True)
             self.perform_update(serializer)
@@ -250,4 +277,324 @@ class AdminBookingReviewLinkView(APIView):
                 },
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class AdminBookingStatusUpdateView(APIView):
+    """Admin endpoint for updating booking status with transition validation."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def patch(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = BookingStatusUpdateSerializer(
+            booking,
+            data=request.data,
+            partial=True,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            {
+                'message': 'Booking status updated successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'status': booking.status,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminAssignTherapistView(APIView):
+    """Admin endpoint for assigning therapist and setting booking status to ASSIGNED."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def patch(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = BookingAssignTherapistSerializer(
+            booking,
+            data=request.data,
+            partial=True,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            {
+                'message': 'Therapist assigned successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'status': booking.status,
+                    'therapist': serializer.data.get('therapist'),
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingGeocodeView(APIView):
+    """Admin endpoint for geocoding booking-related address fields."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def post(self, request):
+        serializer = BookingGeocodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        latitude, longitude = geocode_location_from_address(
+            alamat=serializer.validated_data.get('alamat', ''),
+            kelurahan=serializer.validated_data.get('kelurahan', ''),
+            kecamatan=serializer.validated_data.get('kecamatan', ''),
+            kota=serializer.validated_data.get('kota', ''),
+        )
+
+        if latitude is None or longitude is None:
+            return Response(
+                {
+                    'error': 'Koordinat tidak ditemukan dari alamat yang diberikan.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {
+                'message': 'Geocoding success',
+                'data': {
+                    'latitude': latitude,
+                    'longitude': longitude,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingTherapistsByDistanceView(APIView):
+    """Admin endpoint for listing assignable therapists sorted by distance."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def get(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            therapists = get_assignable_therapists_by_distance(booking)
+        except ValueError as error:
+            return Response(
+                {
+                    'error': str(error)
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {
+                'message': 'Therapists retrieved successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'results': therapists,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingDetailGeocodeView(APIView):
+    """Admin endpoint for manually re-geocoding a booking by booking_id."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def post(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        latitude, longitude = geocode_location_from_address(
+            alamat=booking.alamat or '',
+            kelurahan=booking.kelurahan or '',
+            kecamatan=booking.kecamatan or '',
+            kota=booking.kota or '',
+        )
+
+        if latitude is None or longitude is None:
+            return Response(
+                {
+                    'error': 'Koordinat tidak ditemukan untuk booking ini.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        old_snapshot = booking._get_audit_snapshot()
+        booking.latitude = latitude
+        booking.longitude = longitude
+        booking.save(update_fields=['latitude', 'longitude', 'updated_at'])
+        booking.create_change_logs_from_snapshot(old_snapshot, changed_by=request.user)
+
+        return Response(
+            {
+                'message': 'Booking geocode updated successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'latitude': booking.latitude,
+                    'longitude': booking.longitude,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class AdminBookingChangeLogListView(APIView):
+    """Admin endpoint for viewing booking field-level change logs."""
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def get(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        logs = booking.change_logs.all()
+        serializer = BookingChangeLogSerializer(logs, many=True)
+        return Response(
+            {
+                'count': logs.count(),
+                'results': serializer.data,
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class TherapistBookingStatusUpdateView(APIView):
+    """Therapist endpoint for updating CHECKED_IN and CHECKED_OUT status."""
+
+    permission_classes = [IsTherapist]
+
+    def patch(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if booking.therapist_id and booking.therapist_id != request.user.id:
+            return Response(
+                {
+                    'error': 'Anda tidak memiliki akses untuk mengubah status booking ini.'
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = TherapistBookingStatusUpdateSerializer(
+            booking,
+            data=request.data,
+            partial=True,
+            context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(
+            {
+                'message': 'Booking status updated successfully',
+                'data': {
+                    'booking_id': booking.booking_id,
+                    'status': booking.status,
+                }
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+# ──────────────────────────────────────────────────────────────────
+# UTILITY VIEWS
+# ──────────────────────────────────────────────────────────────────
+
+class ParseWhatsAppMessageView(APIView):
+    """
+    Parse a WhatsApp reservation message and return extracted booking fields.
+
+    Does NOT create a booking or touch the database — purely for data extraction.
+
+    Request body (JSON):
+        { "message": "<raw WhatsApp text>" }
+
+    Response (200):
+        {
+            "nama": "",
+            "alamat": "",
+            "kota": "",
+            "no_hp": "",
+            "tgl_treatment": "",
+            "jam_treatment": "",
+            "perawatan_pilihan": "",
+            "aromatherapy_oil": "",
+            "kondisi_khusus": "",
+            "tahu_dari": ""
+        }
+
+    Accessible to anyone (public endpoint, no sensitive data is stored).
+    """
+    permission_classes = [AllowAnyPermission]
+
+    def post(self, request):
+        message = request.data.get('message', '')
+        if not message or not isinstance(message, str):
+            return Response(
+                {'error': 'Field "message" wajib diisi dan harus berupa string.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        extracted = extract_booking_from_whatsapp_message(message)
+        return Response(extracted, status=status.HTTP_200_OK)
 
