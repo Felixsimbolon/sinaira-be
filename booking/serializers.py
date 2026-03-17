@@ -1,5 +1,7 @@
 from rest_framework import serializers
+from django.db import transaction
 from .models import Booking, BookingChangeLog
+from layanan.models import Layanan
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import date
@@ -30,10 +32,7 @@ def _resolve_geocode(alamat, kelurahan, kecamatan, kota):
 
 
 class BookingCreateSerializer(serializers.ModelSerializer):
-    """
-    Serializer for creating bookings.
-    Supports both anonymous and authenticated bookings.
-    """
+    MINIMUM_BOOKING_TOTAL = 180000
 
     class Meta:
         model = Booking
@@ -49,6 +48,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'tgl_treatment',
             'jam_treatment',
             'perawatan_pilihan',
+            'harga',
             'aromatherapy_oil',
             'kondisi_khusus',
             'tahu_dari',
@@ -57,7 +57,69 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'status',
             'created_at',
         ]
-        read_only_fields = ['booking_id', 'status', 'created_at']
+        read_only_fields = ['booking_id', 'status', 'harga', 'created_at']
+
+    @staticmethod
+    def _extract_selected_layanan_names(perawatan_pilihan: str) -> list[str]:
+        if not perawatan_pilihan:
+            return []
+
+        names = [name.strip() for name in perawatan_pilihan.split(',') if name.strip()]
+        # Keep order while removing duplicates.
+        return list(dict.fromkeys(names))
+
+    def _calculate_base_price_from_layanan(self, perawatan_pilihan: str):
+        selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+        if not selected_names:
+            return None
+
+        layanan_qs = Layanan.active_objects.filter(
+            is_active=True,
+            nama__in=selected_names,
+        ).only('nama', 'harga')
+
+        layanan_by_name = {}
+        for layanan in layanan_qs:
+            layanan_by_name.setdefault(layanan.nama, []).append(layanan)
+
+        # If data layanan is incomplete/ambiguous, reject to keep price deterministic.
+        missing_names = [name for name in selected_names if name not in layanan_by_name]
+        has_ambiguous_name = any(len(items) > 1 for items in layanan_by_name.values())
+        if missing_names or has_ambiguous_name:
+            raise serializers.ValidationError(
+                {
+                    'perawatan_pilihan': (
+                        'Perawatan pilihan tidak valid atau duplikat. '
+                        'Pastikan layanan yang dipilih tersedia dan unik.'
+                    )
+                }
+            )
+
+        return sum(layanan_by_name[name][0].harga for name in selected_names)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        calculated_harga = self._calculate_base_price_from_layanan(
+            attrs.get('perawatan_pilihan', ''),
+        )
+
+        if calculated_harga is None:
+            raise serializers.ValidationError(
+                {'perawatan_pilihan': 'Perawatan pilihan wajib diisi.'}
+            )
+
+        if calculated_harga < self.MINIMUM_BOOKING_TOTAL:
+            raise serializers.ValidationError(
+                {
+                    'perawatan_pilihan': (
+                        f'Total harga layanan minimal Rp {self.MINIMUM_BOOKING_TOTAL:,}.'.replace(',', '.')
+                    )
+                }
+            )
+
+        attrs['calculated_harga'] = calculated_harga
+        return attrs
 
     def validate_no_hp(self, value):
         """Validate that phone number contains only digits."""
@@ -104,6 +166,10 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         )
         validated_data['latitude'] = latitude
         validated_data['longitude'] = longitude
+
+        calculated_harga = validated_data.pop('calculated_harga', None)
+        if calculated_harga is not None:
+            validated_data['harga'] = calculated_harga
         
         return super().create(validated_data)
 
@@ -132,6 +198,7 @@ class BookingListSerializer(serializers.ModelSerializer):
             'no_hp',
             'jadwal',
             'perawatan_pilihan',
+            'harga',
             'status',
             'has_review',
         ]
@@ -174,6 +241,8 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'tgl_treatment',
             'jam_treatment',
             'perawatan_pilihan',
+            'harga',
+            'total_pembayaran',
             'aromatherapy_oil',
             'kondisi_khusus',
             'tahu_dari',
@@ -244,29 +313,85 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['status']
+        fields = ['status', 'harga', 'total_pembayaran']
 
-    def validate_status(self, value):
+    def validate(self, attrs):
         booking = self.instance
         if booking is None:
-            return value
+            return attrs
 
-        if value == Booking.BookingStatus.CHECKED_IN and booking.therapist_id is None:
+        new_status = attrs.get('status')
+        effective_status = new_status or booking.status
+        harga = attrs.get('harga', booking.harga)
+        total_pembayaran = attrs.get('total_pembayaran', booking.total_pembayaran)
+
+        if new_status and not booking.can_transition_to(new_status):
             raise serializers.ValidationError(
-                'Booking harus memiliki therapist yang ditugaskan sebelum CHECKED_IN.'
+                {'status': f'Transisi status dari {booking.status} ke {new_status} tidak diperbolehkan.'}
             )
 
-        if not booking.can_transition_to(value):
+        if effective_status == Booking.BookingStatus.CHECKED_IN and booking.therapist_id is None:
             raise serializers.ValidationError(
-                f'Transisi status dari {booking.status} ke {value} tidak diperbolehkan.'
+                {'status': 'Booking harus memiliki therapist yang ditugaskan sebelum CHECKED_IN.'}
             )
 
-        return value
+        if effective_status == Booking.BookingStatus.PAID:
+            payment_errors = {}
+
+            if total_pembayaran is None and harga is not None:
+                # Allow simpler PAID transition: default total to harga when not provided.
+                attrs['total_pembayaran'] = harga
+                total_pembayaran = harga
+
+            if harga is None:
+                payment_errors['harga'] = 'Field harga wajib diisi sebelum status menjadi PAID.'
+            if total_pembayaran is None:
+                payment_errors['total_pembayaran'] = 'Field total_pembayaran wajib diisi sebelum status menjadi PAID.'
+
+            if harga is not None and harga <= 0:
+                payment_errors['harga'] = 'Harga harus lebih besar dari 0.'
+            if total_pembayaran is not None and total_pembayaran <= 0:
+                payment_errors['total_pembayaran'] = 'Total pembayaran harus lebih besar dari 0.'
+
+            if payment_errors:
+                raise serializers.ValidationError(payment_errors)
+
+        if booking.status == Booking.BookingStatus.CONFIRMED and new_status in {
+            Booking.BookingStatus.ASSIGNED,
+            Booking.BookingStatus.CHECKED_IN,
+            Booking.BookingStatus.CHECKED_OUT,
+            Booking.BookingStatus.COMPLETED,
+        }:
+            raise serializers.ValidationError(
+                {'status': 'Setelah CONFIRMED, booking harus berstatus PAID atau CANCELLED terlebih dahulu.'}
+            )
+
+        return attrs
 
     def update(self, instance, validated_data):
+        old_snapshot = instance._get_audit_snapshot()
         request = self.context.get('request')
         changed_by = request.user if request and request.user.is_authenticated else None
-        instance.update_status(validated_data['status'], changed_by=changed_by)
+
+        update_fields = []
+
+        if 'harga' in validated_data:
+            instance.harga = validated_data['harga']
+            update_fields.append('harga')
+
+        if 'total_pembayaran' in validated_data:
+            instance.total_pembayaran = validated_data['total_pembayaran']
+            update_fields.append('total_pembayaran')
+
+        if 'status' in validated_data:
+            instance.status = validated_data['status']
+            update_fields.append('status')
+
+        if update_fields:
+            with transaction.atomic():
+                instance.save(update_fields=[*update_fields, 'updated_at'])
+                instance.create_change_logs_from_snapshot(old_snapshot, changed_by=changed_by)
+
         return instance
 
 
@@ -319,7 +444,7 @@ class TherapistBookingStatusUpdateSerializer(serializers.ModelSerializer):
 
 
 class BookingAssignTherapistSerializer(serializers.ModelSerializer):
-    """Serializer for assigning/reassigning therapist in CONFIRMED or ASSIGNED status."""
+    """Serializer for assigning/reassigning therapist in PAID or ASSIGNED status."""
 
     therapist_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.filter(role='THERAPIST'),
@@ -339,12 +464,12 @@ class BookingAssignTherapistSerializer(serializers.ModelSerializer):
             return attrs
 
         allowed_statuses = [
-            Booking.BookingStatus.CONFIRMED,
+            Booking.BookingStatus.PAID,
             Booking.BookingStatus.ASSIGNED,
         ]
         if booking.status not in allowed_statuses:
             raise serializers.ValidationError(
-                {'status': 'Therapist hanya dapat di-assign/reassign ketika booking berstatus CONFIRMED atau ASSIGNED.'}
+                {'status': 'Therapist hanya dapat di-assign/reassign ketika booking berstatus PAID atau ASSIGNED.'}
             )
 
         therapist = attrs.get('therapist')

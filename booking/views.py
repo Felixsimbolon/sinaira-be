@@ -194,6 +194,44 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+    def update(self, request, *args, **kwargs):
+        try:
+            instance = self.get_object()
+
+            if instance.status != Booking.BookingStatus.PENDING:
+                return Response(
+                    {
+                        'error': 'Booking hanya dapat di-update penuh ketika status masih PENDING.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if any(field in request.data for field in ['status', 'therapist', 'therapist_id']):
+                return Response(
+                    {
+                        'error': 'Update status atau therapist harus menggunakan endpoint khusus.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            partial = kwargs.pop('partial', False)
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            serializer.is_valid(raise_exception=True)
+            self.perform_update(serializer)
+
+            return Response({
+                'message': 'Booking updated successfully',
+                'data': serializer.data
+            })
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {kwargs.get("booking_id")} tidak ditemukan.'
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 
 class AdminBookingReviewLinkView(APIView):
     """
@@ -240,45 +278,6 @@ class AdminBookingReviewLinkView(APIView):
                 'review_url': review_url,
             }
         )
-
-    def update(self, request, *args, **kwargs):
-        try:
-            instance = self.get_object()
-
-            if instance.status != Booking.BookingStatus.PENDING:
-                return Response(
-                    {
-                        'error': 'Booking hanya dapat di-update penuh ketika status masih PENDING.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            if any(field in request.data for field in ['status', 'therapist', 'therapist_id']):
-                return Response(
-                    {
-                        'error': 'Update status atau therapist harus menggunakan endpoint khusus.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            partial = kwargs.pop('partial', False)
-            serializer = self.get_serializer(instance, data=request.data, partial=partial)
-            serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
-
-            return Response({
-                'message': 'Booking updated successfully',
-                'data': serializer.data
-            })
-        except Booking.DoesNotExist:
-            return Response(
-                {
-                    'error': 'Booking tidak ditemukan',
-                    'detail': f'Booking dengan ID {kwargs.get("booking_id")} tidak ditemukan.'
-                },
-                status=status.HTTP_404_NOT_FOUND
-            )
-
 
 class AdminBookingStatusUpdateView(APIView):
     """Admin endpoint for updating booking status with transition validation."""

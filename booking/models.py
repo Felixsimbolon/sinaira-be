@@ -37,6 +37,7 @@ class Booking(models.Model):
     class BookingStatus(models.TextChoices):
         PENDING = "PENDING", "Pending"
         CONFIRMED = "CONFIRMED", "Confirmed"
+        PAID = "PAID", "Paid"
         ASSIGNED = "ASSIGNED", "Assigned"
         CHECKED_IN = "CHECKED_IN", "Checked-in"
         CHECKED_OUT = "CHECKED_OUT", "Checked-out"
@@ -45,7 +46,8 @@ class Booking(models.Model):
 
     VALID_STATUS_TRANSITIONS = {
         BookingStatus.PENDING: {BookingStatus.CONFIRMED, BookingStatus.CANCELLED},
-        BookingStatus.CONFIRMED: {BookingStatus.ASSIGNED, BookingStatus.CANCELLED},
+        BookingStatus.CONFIRMED: {BookingStatus.PAID, BookingStatus.CANCELLED},
+        BookingStatus.PAID: {BookingStatus.ASSIGNED, BookingStatus.CANCELLED},
         BookingStatus.ASSIGNED: {BookingStatus.CHECKED_IN, BookingStatus.CANCELLED},
         BookingStatus.CHECKED_IN: {BookingStatus.CHECKED_OUT},
         BookingStatus.CHECKED_OUT: {BookingStatus.COMPLETED},
@@ -148,6 +150,22 @@ class Booking(models.Model):
     perawatan_pilihan = models.CharField(
         max_length=255,
         help_text="Selected treatment/service"
+    )
+
+    harga = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Base treatment price before shipping/adjustment"
+    )
+
+    total_pembayaran = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Final payable amount including shipping/adjustment"
     )
     
     aromatherapy_oil = models.CharField(
@@ -288,11 +306,11 @@ class Booking(models.Model):
             self.create_change_logs_from_snapshot(old_snapshot, changed_by=changed_by)
 
     def assign_therapist(self, therapist, changed_by=None):
-        """Assign or reassign therapist when booking is CONFIRMED or ASSIGNED."""
+        """Assign or reassign therapist when booking is PAID or ASSIGNED."""
         old_snapshot = self._get_audit_snapshot()
 
-        if self.status not in [self.BookingStatus.CONFIRMED, self.BookingStatus.ASSIGNED]:
-            raise ValueError("Therapist can only be assigned when booking is CONFIRMED or ASSIGNED.")
+        if self.status not in [self.BookingStatus.PAID, self.BookingStatus.ASSIGNED]:
+            raise ValueError("Therapist can only be assigned when booking is PAID or ASSIGNED.")
 
         self.therapist = therapist
         self.status = self.BookingStatus.ASSIGNED
