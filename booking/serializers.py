@@ -122,6 +122,7 @@ class BookingListSerializer(serializers.ModelSerializer):
     Shows: ID booking, Nama customer, Jadwal, Layanan, Status
     """
     jadwal = serializers.SerializerMethodField()
+    has_review = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -132,11 +133,15 @@ class BookingListSerializer(serializers.ModelSerializer):
             'jadwal',
             'perawatan_pilihan',
             'status',
+            'has_review',
         ]
 
     def get_jadwal(self, obj):
         """Combine date and time for display."""
         return f"{obj.tgl_treatment} {obj.jam_treatment.strftime('%H:%M')}"
+
+    def get_has_review(self, obj):
+        return hasattr(obj, 'review')
 
 
 class BookingDetailSerializer(serializers.ModelSerializer):
