@@ -111,6 +111,12 @@ class Booking(models.Model):
         help_text="City"
     )
 
+    kode_pos = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Postal code"
+    )
+
     latitude = models.FloatField(
         blank=True,
         null=True,

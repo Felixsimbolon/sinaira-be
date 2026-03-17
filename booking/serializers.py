@@ -44,6 +44,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'kelurahan',
             'kecamatan',
             'kota',
+            'kode_pos',
             'no_hp',
             'tgl_treatment',
             'jam_treatment',
@@ -71,6 +72,19 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         today = date.today()
         if value < today:
             raise serializers.ValidationError("Tanggal treatment tidak boleh di masa lalu.")
+        return value
+
+    def validate_kode_pos(self, value):
+        """Optional postal code, if provided must be numeric and 5 digits."""
+        if not value:
+            return value
+
+        if not value.isdigit():
+            raise serializers.ValidationError("Kode pos harus berisi angka saja.")
+
+        if len(value) != 5:
+            raise serializers.ValidationError("Kode pos harus 5 digit.")
+
         return value
 
     def create(self, validated_data):
@@ -148,6 +162,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'kelurahan',
             'kecamatan',
             'kota',
+            'kode_pos',
             'latitude',
             'longitude',
             'no_hp',
@@ -204,6 +219,7 @@ class BookingHistorySerializer(serializers.ModelSerializer):
             'kelurahan',
             'kecamatan',
             'kota',
+            'kode_pos',
             'latitude',
             'longitude',
             'no_hp',
