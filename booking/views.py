@@ -13,6 +13,7 @@ from .serializers import (
     BookingHistorySerializer,
     BookingStatusUpdateSerializer,
     TherapistBookingStatusUpdateSerializer,
+    TherapistBookingListSerializer,
     BookingAssignTherapistSerializer,
     BookingGeocodeSerializer,
     BookingChangeLogSerializer,
@@ -508,6 +509,79 @@ class AdminBookingChangeLogListView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class TherapistBookingListView(generics.ListAPIView):
+    """
+    Therapist endpoint for listing their assigned bookings (Sesi Saya).
+    Returns only bookings where therapist = request.user.
+    """
+    permission_classes = [IsTherapist]
+    serializer_class = TherapistBookingListSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return Booking.objects.filter(therapist=self.request.user).order_by(
+            '-tgl_treatment', '-jam_treatment'
+        )
+
+
+class AdminTherapistAssignedBookingsView(generics.ListAPIView):
+    """
+    Admin endpoint to list all bookings assigned to a specific therapist.
+    Uses the same shape as therapist Sesi Saya, but filtered by therapist_id.
+    """
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+    serializer_class = TherapistBookingListSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        from therapist.models import Therapist  # local import to avoid circular
+
+        therapist_id = self.kwargs.get('id')
+        try:
+            therapist = Therapist.objects.get(id=therapist_id)
+        except Therapist.DoesNotExist:
+            return Booking.objects.none()
+
+        if not therapist.user:
+            return Booking.objects.none()
+
+        return Booking.objects.filter(therapist=therapist.user).order_by(
+            '-tgl_treatment', '-jam_treatment'
+        )
+
+
+class TherapistBookingDetailView(APIView):
+    """
+    Therapist endpoint for retrieving one assigned booking detail.
+    Returns 404 if booking is not assigned to the current therapist.
+    """
+    permission_classes = [IsTherapist]
+
+    def get(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.',
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if booking.therapist_id != request.user.id:
+            return Response(
+                {
+                    'error': 'Anda tidak memiliki akses ke booking ini.',
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = BookingDetailSerializer(booking)
+        return Response(serializer.data)
 
 
 class TherapistBookingStatusUpdateView(APIView):

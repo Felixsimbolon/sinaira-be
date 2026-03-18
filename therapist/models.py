@@ -1,16 +1,26 @@
+from django.conf import settings
 from django.db import models
 
 
 class Therapist(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="therapist_profile",
+        help_text="Linked staff account for this therapist.",
+    )
     username = models.CharField(max_length=150, unique=True, blank=True, default="")
     name = models.CharField(max_length=255)
     email = models.EmailField(unique=True)
     license_number = models.CharField(max_length=100, blank=True, default="")
 
     specialization = models.CharField(max_length=255, blank=True, default="")
+    address = models.CharField(max_length=500, blank=True, default="")
     years_experience = models.PositiveIntegerField(default=0)
     consultation_rate = models.PositiveIntegerField(default=0)
-    alamat = models.TextField(help_text="Therapist address")
+    alamat = models.TextField(blank=True, default="", help_text="Therapist address")
     no_hp = models.CharField(max_length=20, blank=True, default="", db_index=True)
     kota = models.CharField(max_length=100, blank=True, null=True)
     kelurahan = models.CharField(max_length=100, blank=True, null=True)

@@ -211,6 +211,32 @@ class BookingListSerializer(serializers.ModelSerializer):
         return hasattr(obj, 'review')
 
 
+class TherapistBookingListSerializer(serializers.ModelSerializer):
+    """
+    Serializer for therapist's assigned bookings list (Sesi Saya).
+    Includes alamat and kondisi_khusus for session cards.
+    """
+    jadwal = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Booking
+        fields = [
+            'booking_id',
+            'nama',
+            'no_hp',
+            'jadwal',
+            'tgl_treatment',
+            'jam_treatment',
+            'perawatan_pilihan',
+            'alamat',
+            'kondisi_khusus',
+            'status',
+        ]
+
+    def get_jadwal(self, obj):
+        return f"{obj.tgl_treatment} {obj.jam_treatment.strftime('%H:%M')}"
+
+
 class BookingDetailSerializer(serializers.ModelSerializer):
     """
     Serializer for detailed booking view.

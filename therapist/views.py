@@ -34,6 +34,16 @@ class TherapistViewSet(viewsets.ModelViewSet):
             return TherapistCreateSerializer
         return TherapistSerializer
 
+    def perform_destroy(self, instance: Therapist):
+        """
+        When a therapist is deleted from the Terapis page, also remove
+        the linked User account so the Akun page stays in sync.
+        """
+        user = getattr(instance, "user", None)
+        instance.delete()
+        if user:
+            user.delete()
+
 
 class AdminTherapistGeocodeView(APIView):
     permission_classes = [IsAuthenticated, CanManageTherapist]
