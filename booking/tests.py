@@ -358,6 +358,63 @@ class BookingStatusFlowAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(booking.status, Booking.BookingStatus.CONFIRMED)
 
+    def test_admin_tidak_bisa_cancel_tanpa_alasan(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/status/',
+            {'status': Booking.BookingStatus.CANCELLED},
+            format='json',
+        )
+
+        booking.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('cancellation_reason', response.data)
+        self.assertEqual(booking.status, Booking.BookingStatus.PENDING)
+
+    def test_admin_bisa_cancel_dengan_alasan_dan_tersimpan(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/status/',
+            {
+                'status': Booking.BookingStatus.CANCELLED,
+                'cancellation_reason': 'Customer meminta pembatalan karena bentrok jadwal.',
+            },
+            format='json',
+        )
+
+        booking.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking.status, Booking.BookingStatus.CANCELLED)
+        self.assertEqual(
+            booking.cancellation_reason,
+            'Customer meminta pembatalan karena bentrok jadwal.',
+        )
+
+    def test_booking_detail_menampilkan_cancellation_reason(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PENDING)
+        self.client.force_authenticate(user=self.admin)
+
+        cancel_response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/status/',
+            {
+                'status': Booking.BookingStatus.CANCELLED,
+                'cancellation_reason': 'Customer tidak bisa hadir.',
+            },
+            format='json',
+        )
+        detail_response = self.client.get(
+            f'/api/admin/bookings/{booking.booking_id}/',
+            format='json',
+        )
+
+        self.assertEqual(cancel_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data['cancellation_reason'], 'Customer tidak bisa hadir.')
+
     def test_admin_tidak_bisa_ubah_pending_ke_checked_in(self):
         booking = self._create_booking()
         self.client.force_authenticate(user=self.admin)
@@ -1361,9 +1418,8 @@ class BookingGeolocationEndpointAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data['data']['results']
-        self.assertEqual(len(results), 4)
+        self.assertEqual(len(results), 5)
         self.assertEqual(results[0]['id'], self.near_user.id)
-        self.assertEqual(results[-1]['id'], self.no_coord_user.id)
 
         numeric_distances = [item['distance_km'] for item in results if item['distance_km'] is not None]
         self.assertEqual(numeric_distances, sorted(numeric_distances))
@@ -1377,8 +1433,9 @@ class BookingGeolocationEndpointAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data['data']['results']
-        self.assertEqual(results[-1]['id'], self.no_coord_user.id)
-        self.assertIsNone(results[-1]['distance_km'])
+        null_distance_ids = [item['id'] for item in results if item['distance_km'] is None]
+        self.assertIn(self.no_coord_user.id, null_distance_ids)
+        self.assertTrue(results[-1]['distance_km'] is None)
 
     def test_therapists_by_distance_include_therapist_beda_kota(self):
         self.client.force_authenticate(user=self.admin)

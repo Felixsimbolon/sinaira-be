@@ -285,6 +285,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'kondisi_khusus',
             'tahu_dari',
             'status',
+            'cancellation_reason',
             'therapist',
             'therapist_id',
             'notes',
@@ -350,6 +351,7 @@ class BookingHistorySerializer(serializers.ModelSerializer):
             'aromatherapy_oil',
             'kondisi_khusus',
             'status',
+            'cancellation_reason',
             'created_at',
         ]
         read_only_fields = fields
@@ -360,7 +362,7 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['status', 'harga', 'total_pembayaran']
+        fields = ['status', 'harga', 'total_pembayaran', 'cancellation_reason']
 
     def validate(self, attrs):
         booking = self.instance
@@ -403,6 +405,14 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
             if payment_errors:
                 raise serializers.ValidationError(payment_errors)
 
+        if new_status == Booking.BookingStatus.CANCELLED:
+            cancellation_reason = (attrs.get('cancellation_reason') or '').strip()
+            if not cancellation_reason:
+                raise serializers.ValidationError(
+                    {'cancellation_reason': 'Alasan pembatalan wajib diisi saat status CANCELLED.'}
+                )
+            attrs['cancellation_reason'] = cancellation_reason
+
         if booking.status == Booking.BookingStatus.CONFIRMED and new_status in {
             Booking.BookingStatus.ASSIGNED,
             Booking.BookingStatus.CHECKED_IN,
@@ -433,6 +443,10 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
         if 'status' in validated_data:
             instance.status = validated_data['status']
             update_fields.append('status')
+
+        if 'cancellation_reason' in validated_data:
+            instance.cancellation_reason = validated_data['cancellation_reason']
+            update_fields.append('cancellation_reason')
 
         if update_fields:
             with transaction.atomic():
