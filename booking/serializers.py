@@ -31,6 +31,14 @@ def _resolve_geocode(alamat, kelurahan, kecamatan, kota):
     )
 
 
+def _get_max_booking_date_from_today(today: date) -> date:
+    try:
+        return today.replace(year=today.year + 1)
+    except ValueError:
+        # Handle leap day: map Feb 29 to Feb 28 next year.
+        return today.replace(year=today.year + 1, day=28)
+
+
 class BookingCreateSerializer(serializers.ModelSerializer):
     MINIMUM_BOOKING_TOTAL = 180000
 
@@ -130,10 +138,13 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_tgl_treatment(self, value):
-        """Validate that treatment date is not in the past."""
+        """Validate that treatment date is not in the past and not beyond 1 year."""
         today = date.today()
+        max_booking_date = _get_max_booking_date_from_today(today)
         if value < today:
             raise serializers.ValidationError("Tanggal treatment tidak boleh di masa lalu.")
+        if value > max_booking_date:
+            raise serializers.ValidationError("Tanggal treatment maksimal 1 tahun dari hari ini.")
         return value
 
     def validate_kode_pos(self, value):
@@ -199,6 +210,7 @@ class BookingListSerializer(serializers.ModelSerializer):
             'jadwal',
             'perawatan_pilihan',
             'harga',
+            'total_pembayaran',
             'status',
             'has_review',
         ]
@@ -281,6 +293,15 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['booking_id', 'created_at', 'updated_at']
+
+    def validate_tgl_treatment(self, value):
+        today = date.today()
+        max_booking_date = _get_max_booking_date_from_today(today)
+        if value < today:
+            raise serializers.ValidationError("Tanggal treatment tidak boleh di masa lalu.")
+        if value > max_booking_date:
+            raise serializers.ValidationError("Tanggal treatment maksimal 1 tahun dari hari ini.")
+        return value
 
     def update(self, instance, validated_data):
         old_snapshot = instance._get_audit_snapshot()
