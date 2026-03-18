@@ -385,6 +385,21 @@ class TherapistTimetableAPITest(APITestCase):
 
 		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+	def test_reject_weekly_non_30_minute_slot(self):
+		self.client.force_authenticate(user=self.admin)
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/weekly-schedule/',
+			{
+				'day_of_week': 0,
+				'start_time': '13:15:00',
+				'end_time': '15:00:00',
+				'is_active': True,
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 	def test_create_date_override_valid(self):
 		self.client.force_authenticate(user=self.admin)
 		target_date = date.today() + timedelta(days=1)
@@ -422,6 +437,23 @@ class TherapistTimetableAPITest(APITestCase):
 				'override_type': 'AVAILABLE',
 				'start_time': '12:00:00',
 				'end_time': '14:00:00',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+	def test_reject_date_override_non_30_minute_slot(self):
+		self.client.force_authenticate(user=self.admin)
+		target_date = date.today() + timedelta(days=1)
+
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
+			{
+				'date': target_date.isoformat(),
+				'override_type': 'UNAVAILABLE',
+				'start_time': '13:00:00',
+				'end_time': '15:15:00',
 			},
 			format='json',
 		)
