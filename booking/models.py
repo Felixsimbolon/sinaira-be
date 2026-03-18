@@ -261,6 +261,18 @@ class Booking(models.Model):
             return value.isoformat()
         return str(value)
 
+    def _resolve_fk_display(self, field, pk_value):
+        """Return a human-readable string for a FK value instead of a raw ID."""
+        if pk_value is None:
+            return None
+        try:
+            related_obj = field.related_model.objects.get(pk=pk_value)
+            if hasattr(related_obj, 'name') and related_obj.name:
+                return related_obj.name
+            return str(related_obj)
+        except field.related_model.DoesNotExist:
+            return str(pk_value)
+
     def create_change_logs_from_snapshot(self, old_snapshot: dict, changed_by=None):
         """Persist per-field delta logs from old_snapshot to current state."""
         log_entries = []
@@ -273,12 +285,19 @@ class Booking(models.Model):
             if old_value == new_value:
                 continue
 
+            if field.is_relation:
+                display_old = self._resolve_fk_display(field, old_value)
+                display_new = self._resolve_fk_display(field, new_value)
+            else:
+                display_old = self._serialize_audit_value(old_value)
+                display_new = self._serialize_audit_value(new_value)
+
             log_entries.append(
                 BookingChangeLog(
                     booking=self,
                     field_name=field_name,
-                    old_value=self._serialize_audit_value(old_value),
-                    new_value=self._serialize_audit_value(new_value),
+                    old_value=display_old,
+                    new_value=display_new,
                     changed_by=changed_by,
                 )
             )

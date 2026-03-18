@@ -145,7 +145,7 @@ class AdminBookingListView(generics.ListAPIView):
     filterset_class = BookingFilter
     search_fields = ['nama', 'no_hp', 'booking_id']
     ordering_fields = ['booking_id', 'nama', 'tgl_treatment', 'jam_treatment', 'status', 'created_at']
-    ordering = ['-tgl_treatment', '-jam_treatment']
+    ordering = ['-created_at']
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
