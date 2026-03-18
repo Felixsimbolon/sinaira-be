@@ -2,6 +2,7 @@ from django.contrib.auth import authenticate
 from rest_framework import serializers
 
 from .models import User
+from therapist.models import Therapist
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
@@ -83,6 +84,25 @@ class CreateAccountSerializer(serializers.ModelSerializer):
         user = User(**validated_data)
         user.set_password(password)  # Hash the password
         user.save()
+
+        # If this is a THERAPIST account, ensure there is a matching
+        # Therapist profile so the Terapis page reflects the new account.
+        if user.role == User.Role.THERAPIST:
+            therapist, created = Therapist.objects.get_or_create(
+                email=user.email,
+                defaults={
+                    "name": user.name,
+                    "username": user.username,
+                    "no_hp": "",
+                    "license_number": "",
+                    "specialization": "",
+                    "address": "",
+                    "alamat": "",
+                },
+            )
+            therapist.user = user
+            therapist.save(update_fields=["user"])
+
         return user
 
 
@@ -167,6 +187,24 @@ class UpdateAccountSerializer(serializers.ModelSerializer):
         if password:
             instance.set_password(password)
         instance.save()
+
+        # Keep linked Therapist profile (if any) in sync for THERAPIST role.
+        if instance.role == User.Role.THERAPIST:
+            try:
+                therapist = instance.therapist_profile
+            except Therapist.DoesNotExist:
+                therapist = None
+
+            if therapist is None:
+                therapist = Therapist.objects.filter(user=instance).first()
+
+            if therapist:
+                therapist.name = instance.name
+                therapist.username = instance.username
+                therapist.email = instance.email
+                therapist.is_active = instance.is_active
+                therapist.save(update_fields=["name", "username", "email", "is_active"])
+
         return instance
 
 

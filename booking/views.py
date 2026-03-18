@@ -13,6 +13,7 @@ from .serializers import (
     BookingHistorySerializer,
     BookingStatusUpdateSerializer,
     TherapistBookingStatusUpdateSerializer,
+    TherapistBookingListSerializer,
     BookingAssignTherapistSerializer,
     BookingGeocodeSerializer,
     BookingChangeLogSerializer,
@@ -36,13 +37,14 @@ class AllowAnyPermission(permissions.BasePermission):
 class BookingFilter(FilterSet):
     """Custom filter for bookings."""
     status = CharFilter(field_name='status', lookup_expr='iexact')
+    kota = CharFilter(field_name='kota', lookup_expr='iexact')
     tgl_treatment = DateFilter(field_name='tgl_treatment')
     tgl_treatment_from = DateFilter(field_name='tgl_treatment', lookup_expr='gte')
     tgl_treatment_to = DateFilter(field_name='tgl_treatment', lookup_expr='lte')
 
     class Meta:
         model = Booking
-        fields = ['status', 'tgl_treatment', 'tgl_treatment_from', 'tgl_treatment_to']
+        fields = ['status', 'kota', 'tgl_treatment', 'tgl_treatment_from', 'tgl_treatment_to']
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -143,7 +145,7 @@ class AdminBookingListView(generics.ListAPIView):
     filterset_class = BookingFilter
     search_fields = ['nama', 'no_hp', 'booking_id']
     ordering_fields = ['booking_id', 'nama', 'tgl_treatment', 'jam_treatment', 'status', 'created_at']
-    ordering = ['-tgl_treatment', '-jam_treatment']
+    ordering = ['-created_at']
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -278,6 +280,52 @@ class AdminBookingReviewLinkView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
+class AdminBookingReviewLinkView(APIView):
+    """
+    Generate (or return existing) review link token for a COMPLETED booking.
+    Only accessible to: OWNER, SUPERVISOR, ADMIN.
+    """
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def post(self, request, booking_id):
+        booking = get_object_or_404(Booking, booking_id=booking_id)
+
+        if booking.status != Booking.BookingStatus.COMPLETED:
+            return Response(
+                {
+                    'error': 'Booking belum selesai',
+                    'detail': 'QR review hanya dapat dibuat untuk booking berstatus COMPLETED.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if booking.therapist is None:
+            return Response(
+                {
+                    'error': 'Therapist belum ditugaskan',
+                    'detail': 'Booking harus memiliki therapist sebelum link review dibuat.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not booking.review_token:
+            booking.generate_review_token(save=True)
+
+        review_url = f"{settings.REVIEW_FORM_BASE_URL}?token={booking.review_token}"
+
+        return Response(
+            {
+                'booking_id': booking.booking_id,
+                'customer_name': booking.nama,
+                'customer_phone': booking.no_hp,
+                'therapist_name': booking.therapist.name,
+                'status': booking.status,
+                'has_review': hasattr(booking, 'review'),
+                'review_token': booking.review_token,
+                'review_url': review_url,
+            }
+        )
 
 class AdminBookingStatusUpdateView(APIView):
     """Admin endpoint for updating booking status with transition validation."""
@@ -508,6 +556,79 @@ class AdminBookingChangeLogListView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+class TherapistBookingListView(generics.ListAPIView):
+    """
+    Therapist endpoint for listing their assigned bookings (Sesi Saya).
+    Returns only bookings where therapist = request.user.
+    """
+    permission_classes = [IsTherapist]
+    serializer_class = TherapistBookingListSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        return Booking.objects.filter(therapist=self.request.user).order_by(
+            '-tgl_treatment', '-jam_treatment'
+        )
+
+
+class AdminTherapistAssignedBookingsView(generics.ListAPIView):
+    """
+    Admin endpoint to list all bookings assigned to a specific therapist.
+    Uses the same shape as therapist Sesi Saya, but filtered by therapist_id.
+    """
+
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+    serializer_class = TherapistBookingListSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        from therapist.models import Therapist  # local import to avoid circular
+
+        therapist_id = self.kwargs.get('id')
+        try:
+            therapist = Therapist.objects.get(id=therapist_id)
+        except Therapist.DoesNotExist:
+            return Booking.objects.none()
+
+        if not therapist.user:
+            return Booking.objects.none()
+
+        return Booking.objects.filter(therapist=therapist.user).order_by(
+            '-tgl_treatment', '-jam_treatment'
+        )
+
+
+class TherapistBookingDetailView(APIView):
+    """
+    Therapist endpoint for retrieving one assigned booking detail.
+    Returns 404 if booking is not assigned to the current therapist.
+    """
+    permission_classes = [IsTherapist]
+
+    def get(self, request, booking_id):
+        try:
+            booking = Booking.objects.get(booking_id=booking_id)
+        except Booking.DoesNotExist:
+            return Response(
+                {
+                    'error': 'Booking tidak ditemukan',
+                    'detail': f'Booking dengan ID {booking_id} tidak ditemukan.',
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if booking.therapist_id != request.user.id:
+            return Response(
+                {
+                    'error': 'Anda tidak memiliki akses ke booking ini.',
+                },
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        serializer = BookingDetailSerializer(booking)
+        return Response(serializer.data)
 
 
 class TherapistBookingStatusUpdateView(APIView):

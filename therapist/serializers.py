@@ -1,9 +1,13 @@
-from rest_framework import serializers
 from datetime import time
+
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
 
 from booking.utils import geocode_location_from_address
 
 from .models import Therapist, TherapistDateOverride, TherapistWeeklyAvailability
+
+User = get_user_model()
 
 
 def _has_minimum_address_for_geocode(alamat, kelurahan, kecamatan, kota):
@@ -58,6 +62,12 @@ class TherapistCreateSerializer(BaseTherapistSerializer):
             'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
+        # We handle uniqueness manually to support "upsert" behaviour when
+        # a Therapist with the same username/email already exists.
+        extra_kwargs = {
+            'username': {'validators': []},
+            'email': {'validators': []},
+        }
 
     def create(self, validated_data):
         latitude, longitude = _resolve_geocode(
@@ -68,7 +78,47 @@ class TherapistCreateSerializer(BaseTherapistSerializer):
         )
         validated_data['latitude'] = latitude
         validated_data['longitude'] = longitude
-        return super().create(validated_data)
+        # Upsert behaviour:
+        # - If a Therapist with the same email/username already exists,
+        #   update that record instead of creating a new one.
+        # - Otherwise create a new Therapist.
+        therapist = (
+            Therapist.objects.filter(email=validated_data.get('email')).first()
+            or Therapist.objects.filter(username=validated_data.get('username')).first()
+        )
+
+        if therapist:
+            for field, value in validated_data.items():
+                setattr(therapist, field, value)
+            therapist.save()
+        else:
+            therapist = super().create(validated_data)
+
+        # Link to an existing THERAPIST account (created from Akun page)
+        # so that Therapists page and Akun stay in sync.
+        user = (
+            User.objects.filter(
+                email=therapist.email,
+                role=User.Role.THERAPIST,
+            ).first()
+            or User.objects.filter(
+                username=therapist.username,
+                role=User.Role.THERAPIST,
+            ).first()
+        )
+
+        if user:
+            therapist.user = user
+            therapist.save(update_fields=['user'])
+
+            # Keep basic identity fields in sync with the therapist profile.
+            user.name = therapist.name
+            if therapist.username:
+                user.username = therapist.username
+            user.email = therapist.email
+            user.save(update_fields=['name', 'username', 'email'])
+
+        return therapist
 
 
 class TherapistSerializer(BaseTherapistSerializer):
@@ -76,12 +126,14 @@ class TherapistSerializer(BaseTherapistSerializer):
         model = Therapist
         fields = [
             "id",
+            "user",
             "username",
             "name",
             "email",
             "no_hp",
             "license_number",
             "specialization",
+            "address",
             "years_experience",
             "consultation_rate",
             "alamat",
@@ -95,6 +147,7 @@ class TherapistSerializer(BaseTherapistSerializer):
             "created_at",
             "updated_at",
         ]
+        read_only_fields = ["user", "created_at", "updated_at"]
 
     def update(self, instance, validated_data):
         address_fields = {'alamat', 'kelurahan', 'kecamatan', 'kota'}
@@ -109,7 +162,37 @@ class TherapistSerializer(BaseTherapistSerializer):
             validated_data['latitude'] = latitude
             validated_data['longitude'] = longitude
 
-        return super().update(instance, validated_data)
+        therapist = super().update(instance, validated_data)
+
+        # Ensure therapist is linked to a THERAPIST account if possible.
+        user = therapist.user
+        if user is None:
+            user = (
+                User.objects.filter(
+                    email=therapist.email,
+                    role=User.Role.THERAPIST,
+                ).first()
+                or User.objects.filter(
+                    username=therapist.username,
+                    role=User.Role.THERAPIST,
+                ).first()
+            )
+            if user:
+                therapist.user = user
+                therapist.save(update_fields=['user'])
+
+        # Propagate basic identity changes back to linked User account so
+        # the Akun page always reflects the latest therapist info.
+        if user:
+            if 'name' in validated_data:
+                user.name = therapist.name
+            if 'username' in validated_data and therapist.username:
+                user.username = therapist.username
+            if 'email' in validated_data:
+                user.email = therapist.email
+            user.save(update_fields=['name', 'username', 'email'])
+
+        return therapist
 
 
 class TherapistWeeklyAvailabilitySerializer(serializers.ModelSerializer):
