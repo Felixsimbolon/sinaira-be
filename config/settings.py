@@ -55,8 +55,7 @@ INSTALLED_APPS = [
     'django_filters',
 
     # Project Apps
-    'accounts',    
-    # Project Apps
+    'accounts',
     'therapist',
     'booking',
     'review',

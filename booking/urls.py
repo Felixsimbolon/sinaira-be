@@ -8,16 +8,14 @@ from .views import (
     AdminBookingReviewLinkView,
     AdminBookingStatusUpdateView,
     AdminAssignTherapistView,
-    TherapistBookingListView,
-    TherapistBookingDetailView,
     AdminBookingGeocodeView,
     AdminBookingTherapistsByDistanceView,
     AdminBookingDetailGeocodeView,
     AdminBookingChangeLogListView,
-    AdminTherapistAssignedBookingsView,
     TherapistBookingStatusUpdateView,
     ParseWhatsAppMessageView,
 )
+
 app_name = 'booking'
 
 urlpatterns = [
@@ -55,23 +53,10 @@ urlpatterns = [
     # Assign therapist by booking_id (PATCH)
     path('admin/bookings/<str:booking_id>/assign-therapist/', AdminAssignTherapistView.as_view(), name='admin-booking-assign-therapist'),
 
-    # Recommend therapists by distance for a booking (GET)
-    path(
-        'admin/bookings/<str:booking_id>/therapists-by-distance/',
-        AdminBookingTherapistsByDistanceView.as_view(),
-        name='admin-booking-therapists-by-distance',
-    ),
+    # List assignable therapists sorted by distance for a booking (GET)
+    path('admin/bookings/<str:booking_id>/therapists-by-distance/', AdminBookingTherapistsByDistanceView.as_view(), name='admin-booking-therapists-by-distance'),
 
-    # List bookings assigned to a specific therapist (by therapist id, admin only)
-    path(
-        'admin/therapists/<int:id>/bookings/',
-        AdminTherapistAssignedBookingsView.as_view(),
-        name='admin-therapist-assigned-bookings',
-    ),
-
-    # Therapist: list and detail for assigned bookings (Sesi Saya)
-    path('therapist/bookings/', TherapistBookingListView.as_view(), name='therapist-booking-list'),
-    path('therapist/bookings/<str:booking_id>/', TherapistBookingDetailView.as_view(), name='therapist-booking-detail'),
+    # Therapist updates own assigned booking status (PATCH)
     path('therapist/bookings/<str:booking_id>/status/', TherapistBookingStatusUpdateView.as_view(), name='therapist-booking-status-update'),
 
     # ── Utility endpoints ─────────────────────────────────────────

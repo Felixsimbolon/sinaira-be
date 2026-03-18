@@ -195,6 +195,53 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
+
+class AdminBookingReviewLinkView(APIView):
+    """
+    Generate (or return existing) review link token for a COMPLETED booking.
+    Only accessible to: OWNER, SUPERVISOR, ADMIN.
+    """
+    permission_classes = [IsAdminOrSupervisorOrOwner]
+
+    def post(self, request, booking_id):
+        booking = get_object_or_404(Booking, booking_id=booking_id)
+
+        if booking.status != Booking.BookingStatus.COMPLETED:
+            return Response(
+                {
+                    'error': 'Booking belum selesai',
+                    'detail': 'QR review hanya dapat dibuat untuk booking berstatus COMPLETED.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if booking.therapist is None:
+            return Response(
+                {
+                    'error': 'Therapist belum ditugaskan',
+                    'detail': 'Booking harus memiliki therapist sebelum link review dibuat.'
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not booking.review_token:
+            booking.generate_review_token(save=True)
+
+        review_url = f"{settings.REVIEW_FORM_BASE_URL}?token={booking.review_token}"
+
+        return Response(
+            {
+                'booking_id': booking.booking_id,
+                'customer_name': booking.nama,
+                'customer_phone': booking.no_hp,
+                'therapist_name': booking.therapist.name,
+                'status': booking.status,
+                'has_review': hasattr(booking, 'review'),
+                'review_token': booking.review_token,
+                'review_url': review_url,
+            }
+        )
+
     def update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
