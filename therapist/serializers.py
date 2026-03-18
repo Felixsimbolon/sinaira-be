@@ -28,7 +28,21 @@ def _resolve_geocode(alamat, kelurahan, kecamatan, kota):
     )
 
 
+def _is_valid_half_hour_slot_boundary(value):
+    return value.second == 0 and value.microsecond == 0 and value.minute in {0, 30}
+
+
 class BaseTherapistSerializer(serializers.ModelSerializer):
+    def to_internal_value(self, data):
+        normalized_data = data.copy() if hasattr(data, 'copy') else dict(data)
+
+        legacy_address = normalized_data.pop('address', None)
+        alamat = normalized_data.get('alamat')
+        if (alamat is None or str(alamat).strip() == '') and legacy_address not in (None, ''):
+            normalized_data['alamat'] = legacy_address
+
+        return super().to_internal_value(normalized_data)
+
     def validate_no_hp(self, value):
         if value in (None, ''):
             return value
@@ -122,6 +136,8 @@ class TherapistCreateSerializer(BaseTherapistSerializer):
 
 
 class TherapistSerializer(BaseTherapistSerializer):
+    address = serializers.CharField(source='alamat', read_only=True)
+
     class Meta:
         model = Therapist
         fields = [
@@ -133,9 +149,9 @@ class TherapistSerializer(BaseTherapistSerializer):
             "no_hp",
             "license_number",
             "specialization",
-            "address",
             "years_experience",
             "consultation_rate",
+            "address",
             "alamat",
             "kota",
             "kelurahan",
@@ -236,6 +252,11 @@ class TherapistWeeklyAvailabilitySerializer(serializers.ModelSerializer):
                 {'time': 'start_time harus lebih kecil dari end_time.'}
             )
 
+        if not _is_valid_half_hour_slot_boundary(start_time) or not _is_valid_half_hour_slot_boundary(end_time):
+            raise serializers.ValidationError(
+                {'time': 'Slot jadwal hanya boleh pada kelipatan 30 menit (menit 00 atau 30).'}
+            )
+
         if start_time < self.GRID_START_TIME or end_time > self.GRID_END_TIME:
             raise serializers.ValidationError(
                 {'time': 'Slot jadwal harus berada dalam rentang 07:00-20:00.'}
@@ -322,6 +343,11 @@ class TherapistDateOverrideSerializer(serializers.ModelSerializer):
         if start_time >= end_time:
             raise serializers.ValidationError(
                 {'time': 'start_time harus lebih kecil dari end_time.'}
+            )
+
+        if not _is_valid_half_hour_slot_boundary(start_time) or not _is_valid_half_hour_slot_boundary(end_time):
+            raise serializers.ValidationError(
+                {'time': 'Slot override hanya boleh pada kelipatan 30 menit (menit 00 atau 30).'}
             )
 
         if start_time < self.GRID_START_TIME or end_time > self.GRID_END_TIME:

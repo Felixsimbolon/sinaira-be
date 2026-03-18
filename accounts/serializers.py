@@ -96,7 +96,6 @@ class CreateAccountSerializer(serializers.ModelSerializer):
                     "no_hp": "",
                     "license_number": "",
                     "specialization": "",
-                    "address": "",
                     "alamat": "",
                 },
             )

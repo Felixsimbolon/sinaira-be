@@ -13,6 +13,7 @@ from geopy.geocoders import Nominatim
 from django.contrib.auth import get_user_model
 
 from therapist.models import Therapist
+from therapist.utils import is_therapist_user_available_for_booking
 
 User = get_user_model()
 
@@ -346,6 +347,7 @@ def get_assignable_therapists_by_distance(booking) -> list[dict]:
     Therapist identity is sourced from accounts.User (role=THERAPIST) so that
     returned ids are directly usable by booking assign endpoint.
     Coordinates are sourced from therapist.Therapist profile via username mapping.
+    Candidates remain visible even when distance cannot be calculated.
     """
     if booking.latitude is None or booking.longitude is None:
         raise ValueError("Booking latitude/longitude is required to calculate therapist distances.")
@@ -353,38 +355,57 @@ def get_assignable_therapists_by_distance(booking) -> list[dict]:
     therapist_users = User.objects.filter(role='THERAPIST', is_active=True)
     usernames = [user.username for user in therapist_users]
 
-    city_profiles = Therapist.objects.filter(
-        username__in=usernames,
-        kota__iexact=booking.kota,
-    )
-    profile_by_username = {profile.username: profile for profile in city_profiles}
+    profiles = Therapist.objects.filter(username__in=usernames)
+    profile_by_username = {profile.username: profile for profile in profiles}
 
     results: list[dict] = []
     for user in therapist_users:
         profile = profile_by_username.get(user.username)
-        if profile is None:
-            continue
+        distance_km = None
+        if (
+            profile is not None
+            and profile.latitude is not None
+            and profile.longitude is not None
+        ):
+            distance_km = round(
+                haversine_distance_km(
+                    booking.latitude,
+                    booking.longitude,
+                    profile.latitude,
+                    profile.longitude,
+                ),
+                2,
+            )
 
-        if profile.latitude is None or profile.longitude is None:
-            continue
-
-        distance_km = haversine_distance_km(
-            booking.latitude,
-            booking.longitude,
-            profile.latitude,
-            profile.longitude,
+        is_available = is_therapist_user_available_for_booking(
+            user,
+            booking.tgl_treatment,
+            booking.jam_treatment,
         )
+
         results.append(
             {
                 "id": user.id,
                 "name": user.name,
                 "username": user.username,
-                "kota": profile.kota,
-                "kelurahan": profile.kelurahan,
-                "kecamatan": profile.kecamatan,
-                "distance_km": round(distance_km, 2),
+                "kota": profile.kota if profile else None,
+                "kelurahan": profile.kelurahan if profile else None,
+                "kecamatan": profile.kecamatan if profile else None,
+                "distance_km": distance_km,
+                "is_available": is_available,
+                "availability_label": "Tersedia" if is_available else "Jadwal tidak tersedia",
+                "availability_reason": (
+                    None
+                    if is_available
+                    else "Therapist tidak tersedia pada jam booking."
+                ),
             }
         )
 
-    results.sort(key=lambda item: item["distance_km"])
+    results.sort(
+        key=lambda item: (
+            item["distance_km"] is None,
+            item["distance_km"] if item["distance_km"] is not None else 0,
+        )
+    )
     return results

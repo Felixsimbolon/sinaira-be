@@ -151,7 +151,7 @@ def resolve_therapist_schedule_range(therapist, start_date: date, end_date: date
 def is_therapist_user_available_for_booking(therapist_user, treatment_date, treatment_time) -> bool:
     profile = Therapist.objects.filter(username=therapist_user.username).first()
     if profile is None:
-        return True
+        return False
 
     resolved = resolve_therapist_schedule_for_date(profile, treatment_date)
     available_slots = [slot for slot in resolved['slots'] if slot.get('status') == 'available']

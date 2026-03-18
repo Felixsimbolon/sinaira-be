@@ -238,6 +238,18 @@ class BookingStatusFlowAPITest(APITestCase):
             therapist=therapist,
         )
 
+    @staticmethod
+    def _ensure_therapist_profile(user, city='Jakarta'):
+        return Therapist.objects.get_or_create(
+            username=user.username,
+            defaults={
+                'name': user.name,
+                'email': user.email,
+                'alamat': 'Jl. Profile Therapist',
+                'kota': city,
+            },
+        )
+
     def _full_update_payload(self):
         return {
             'nama': 'Budi Santoso Updated',
@@ -360,6 +372,7 @@ class BookingStatusFlowAPITest(APITestCase):
 
     def test_admin_bisa_assign_therapist_saat_confirmed(self):
         booking = self._create_booking(status_value=Booking.BookingStatus.PAID)
+        self._ensure_therapist_profile(self.therapist)
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.patch(
@@ -374,6 +387,7 @@ class BookingStatusFlowAPITest(APITestCase):
 
     def test_assign_therapist_mengubah_status_menjadi_assigned(self):
         booking = self._create_booking(status_value=Booking.BookingStatus.PAID)
+        self._ensure_therapist_profile(self.therapist)
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.patch(
@@ -391,6 +405,8 @@ class BookingStatusFlowAPITest(APITestCase):
             status_value=Booking.BookingStatus.ASSIGNED,
             therapist=self.therapist,
         )
+        self._ensure_therapist_profile(self.therapist)
+        self._ensure_therapist_profile(self.other_therapist)
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.patch(
@@ -408,6 +424,8 @@ class BookingStatusFlowAPITest(APITestCase):
             status_value=Booking.BookingStatus.ASSIGNED,
             therapist=self.therapist,
         )
+        self._ensure_therapist_profile(self.therapist)
+        self._ensure_therapist_profile(self.other_therapist)
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.patch(
@@ -697,7 +715,7 @@ class BookingStatusFlowAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_assign_ditolak_jika_therapist_tidak_available_di_timetable(self):
-        booking = self._create_booking(status_value=Booking.BookingStatus.CONFIRMED)
+        booking = self._create_booking(status_value=Booking.BookingStatus.PAID)
         Therapist.objects.create(
             username=self.therapist.username,
             name='Therapist Profile For Timetable',
@@ -715,6 +733,18 @@ class BookingStatusFlowAPITest(APITestCase):
         )
 
         self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
+            {'therapist_id': self.therapist.id},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_assign_ditolak_jika_therapist_tidak_punya_profile(self):
+        booking = self._create_booking(status_value=Booking.BookingStatus.PAID)
+        self.client.force_authenticate(user=self.admin)
+
         response = self.client.patch(
             f'/api/admin/bookings/{booking.booking_id}/assign-therapist/',
             {'therapist_id': self.therapist.id},
@@ -1214,6 +1244,13 @@ class BookingGeolocationEndpointAPITest(APITestCase):
             name='Distance NoCoord User',
             role=User.Role.THERAPIST,
         )
+        self.other_city_user = User.objects.create_user(
+            username='distance_other_city_user',
+            email='distance_other_city_user@example.com',
+            password='password123',
+            name='Distance Other City User',
+            role=User.Role.THERAPIST,
+        )
 
         Therapist.objects.create(
             username=self.near_user.username,
@@ -1242,6 +1279,16 @@ class BookingGeolocationEndpointAPITest(APITestCase):
             kota='Jakarta Selatan',
             latitude=None,
             longitude=None,
+        )
+        Therapist.objects.create(
+            username=self.other_city_user.username,
+            name='Distance Other City Profile',
+            email='distance_other_city_profile@example.com',
+            kota='Bandung',
+            kelurahan='Kelurahan Other City',
+            kecamatan='Kecamatan Other City',
+            latitude=-6.9175,
+            longitude=107.6191,
         )
 
         self.booking = Booking.objects.create(
@@ -1314,11 +1361,26 @@ class BookingGeolocationEndpointAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         results = response.data['data']['results']
-        self.assertEqual(len(results), 2)
+        self.assertEqual(len(results), 4)
         self.assertEqual(results[0]['id'], self.near_user.id)
-        self.assertEqual(results[1]['id'], self.far_user.id)
+        self.assertEqual(results[-1]['id'], self.no_coord_user.id)
 
-    def test_therapists_by_distance_skip_therapist_tanpa_koordinat(self):
+        numeric_distances = [item['distance_km'] for item in results if item['distance_km'] is not None]
+        self.assertEqual(numeric_distances, sorted(numeric_distances))
+
+    def test_therapists_by_distance_include_therapist_tanpa_koordinat_di_urutan_bawah(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/therapists-by-distance/'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data['data']['results']
+        self.assertEqual(results[-1]['id'], self.no_coord_user.id)
+        self.assertIsNone(results[-1]['distance_km'])
+
+    def test_therapists_by_distance_include_therapist_beda_kota(self):
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.get(
@@ -1327,7 +1389,35 @@ class BookingGeolocationEndpointAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         result_ids = [item['id'] for item in response.data['data']['results']]
-        self.assertNotIn(self.no_coord_user.id, result_ids)
+        self.assertIn(self.other_city_user.id, result_ids)
+
+    def test_therapists_by_distance_include_availability_metadata(self):
+        TherapistWeeklyAvailability.objects.create(
+            therapist=Therapist.objects.get(username=self.far_user.username),
+            day_of_week=self.booking.tgl_treatment.weekday(),
+            start_time='14:00:00',
+            end_time='20:00:00',
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.get(
+            f'/api/admin/bookings/{self.booking.booking_id}/therapists-by-distance/'
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results_by_id = {item['id']: item for item in response.data['data']['results']}
+
+        self.assertTrue(results_by_id[self.near_user.id]['is_available'])
+        self.assertEqual(results_by_id[self.near_user.id]['availability_label'], 'Tersedia')
+        self.assertIsNone(results_by_id[self.near_user.id]['availability_reason'])
+
+        self.assertFalse(results_by_id[self.far_user.id]['is_available'])
+        self.assertEqual(results_by_id[self.far_user.id]['availability_label'], 'Jadwal tidak tersedia')
+        self.assertEqual(
+            results_by_id[self.far_user.id]['availability_reason'],
+            'Therapist tidak tersedia pada jam booking.'
+        )
 
     def test_therapists_by_distance_error_jika_booking_tanpa_koordinat(self):
         booking_no_coord = Booking.objects.create(
@@ -1500,7 +1590,21 @@ class BookingAuditLogAPITest(APITestCase):
 
     def test_assign_dan_reassign_therapist_mencatat_log_therapist(self):
         self.client.force_authenticate(user=self.admin)
-        self.booking.status = Booking.BookingStatus.CONFIRMED
+        Therapist.objects.create(
+            username=self.therapist.username,
+            name='Audit Therapist Profile',
+            email='audit_therapist_profile@example.com',
+            alamat='Jl. Audit Terapis',
+            kota='Jakarta Selatan',
+        )
+        Therapist.objects.create(
+            username=self.other_therapist.username,
+            name='Audit Other Therapist Profile',
+            email='audit_other_therapist_profile@example.com',
+            alamat='Jl. Audit Terapis 2',
+            kota='Jakarta Selatan',
+        )
+        self.booking.status = Booking.BookingStatus.PAID
         self.booking.save(update_fields=['status', 'updated_at'])
 
         assign_response = self.client.patch(
