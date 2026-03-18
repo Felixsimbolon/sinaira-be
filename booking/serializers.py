@@ -210,8 +210,6 @@ class BookingListSerializer(serializers.ModelSerializer):
     def get_has_review(self, obj):
         return hasattr(obj, 'review')
 
-<<<<<<< HEAD
-=======
 
 class TherapistBookingListSerializer(serializers.ModelSerializer):
     """
@@ -238,7 +236,6 @@ class TherapistBookingListSerializer(serializers.ModelSerializer):
     def get_jadwal(self, obj):
         return f"{obj.tgl_treatment} {obj.jam_treatment.strftime('%H:%M')}"
 
->>>>>>> a961ee4cc0dd61dc2165ae2d4ed849f14a9b0aa0
 
 class BookingDetailSerializer(serializers.ModelSerializer):
     """
