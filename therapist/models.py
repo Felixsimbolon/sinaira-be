@@ -17,7 +17,6 @@ class Therapist(models.Model):
     license_number = models.CharField(max_length=100, blank=True, default="")
 
     specialization = models.CharField(max_length=255, blank=True, default="")
-    address = models.CharField(max_length=500, blank=True, default="")
     years_experience = models.PositiveIntegerField(default=0)
     consultation_rate = models.PositiveIntegerField(default=0)
     alamat = models.TextField(blank=True, default="", help_text="Therapist address")

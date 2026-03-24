@@ -31,6 +31,14 @@ def _resolve_geocode(alamat, kelurahan, kecamatan, kota):
     )
 
 
+def _get_max_booking_date_from_today(today: date) -> date:
+    try:
+        return today.replace(year=today.year + 1)
+    except ValueError:
+        # Handle leap day: map Feb 29 to Feb 28 next year.
+        return today.replace(year=today.year + 1, day=28)
+
+
 class BookingCreateSerializer(serializers.ModelSerializer):
     MINIMUM_BOOKING_TOTAL = 180000
 
@@ -130,10 +138,13 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_tgl_treatment(self, value):
-        """Validate that treatment date is not in the past."""
+        """Validate that treatment date is not in the past and not beyond 1 year."""
         today = date.today()
+        max_booking_date = _get_max_booking_date_from_today(today)
         if value < today:
             raise serializers.ValidationError("Tanggal treatment tidak boleh di masa lalu.")
+        if value > max_booking_date:
+            raise serializers.ValidationError("Tanggal treatment maksimal 1 tahun dari hari ini.")
         return value
 
     def validate_kode_pos(self, value):
@@ -199,6 +210,7 @@ class BookingListSerializer(serializers.ModelSerializer):
             'jadwal',
             'perawatan_pilihan',
             'harga',
+            'total_pembayaran',
             'status',
             'has_review',
         ]
@@ -273,6 +285,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'kondisi_khusus',
             'tahu_dari',
             'status',
+            'cancellation_reason',
             'therapist',
             'therapist_id',
             'notes',
@@ -281,6 +294,15 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['booking_id', 'created_at', 'updated_at']
+
+    def validate_tgl_treatment(self, value):
+        today = date.today()
+        max_booking_date = _get_max_booking_date_from_today(today)
+        if value < today:
+            raise serializers.ValidationError("Tanggal treatment tidak boleh di masa lalu.")
+        if value > max_booking_date:
+            raise serializers.ValidationError("Tanggal treatment maksimal 1 tahun dari hari ini.")
+        return value
 
     def update(self, instance, validated_data):
         old_snapshot = instance._get_audit_snapshot()
@@ -329,6 +351,7 @@ class BookingHistorySerializer(serializers.ModelSerializer):
             'aromatherapy_oil',
             'kondisi_khusus',
             'status',
+            'cancellation_reason',
             'created_at',
         ]
         read_only_fields = fields
@@ -339,7 +362,7 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ['status', 'harga', 'total_pembayaran']
+        fields = ['status', 'harga', 'total_pembayaran', 'cancellation_reason']
 
     def validate(self, attrs):
         booking = self.instance
@@ -382,6 +405,14 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
             if payment_errors:
                 raise serializers.ValidationError(payment_errors)
 
+        if new_status == Booking.BookingStatus.CANCELLED:
+            cancellation_reason = (attrs.get('cancellation_reason') or '').strip()
+            if not cancellation_reason:
+                raise serializers.ValidationError(
+                    {'cancellation_reason': 'Alasan pembatalan wajib diisi saat status CANCELLED.'}
+                )
+            attrs['cancellation_reason'] = cancellation_reason
+
         if booking.status == Booking.BookingStatus.CONFIRMED and new_status in {
             Booking.BookingStatus.ASSIGNED,
             Booking.BookingStatus.CHECKED_IN,
@@ -412,6 +443,10 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
         if 'status' in validated_data:
             instance.status = validated_data['status']
             update_fields.append('status')
+
+        if 'cancellation_reason' in validated_data:
+            instance.cancellation_reason = validated_data['cancellation_reason']
+            update_fields.append('cancellation_reason')
 
         if update_fields:
             with transaction.atomic():

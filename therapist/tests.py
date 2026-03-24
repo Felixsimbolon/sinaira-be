@@ -94,6 +94,28 @@ class TherapistGeocodeAndPhoneAPITest(APITestCase):
 		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
 	@patch('therapist.serializers.geocode_location_from_address')
+	def test_create_legacy_address_field_disimpan_ke_alamat(self, mock_geocode):
+		mock_geocode.return_value = (-6.21, 106.82)
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.post(
+			'/api/therapists/',
+			{
+				'username': 'therapist_legacy_address_create',
+				'name': 'Therapist Legacy Address Create',
+				'email': 'therapist_legacy_address_create@example.com',
+				'address': 'Alamat dari legacy field',
+				'kota': 'Jakarta',
+				'no_hp': '081234567891',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+		therapist = Therapist.objects.get(username='therapist_legacy_address_create')
+		self.assertEqual(therapist.alamat, 'Alamat dari legacy field')
+
+	@patch('therapist.serializers.geocode_location_from_address')
 	def test_update_alamat_therapist_auto_geocode_ulang(self, mock_geocode):
 		mock_geocode.return_value = (-6.28, 106.75)
 		therapist = Therapist.objects.create(
@@ -122,6 +144,33 @@ class TherapistGeocodeAndPhoneAPITest(APITestCase):
 		therapist.refresh_from_db()
 		self.assertEqual(therapist.latitude, -6.28)
 		self.assertEqual(therapist.longitude, 106.75)
+
+	@patch('therapist.serializers.geocode_location_from_address')
+	def test_update_legacy_address_field_disimpan_ke_alamat(self, mock_geocode):
+		mock_geocode.return_value = (-6.29, 106.74)
+		therapist = Therapist.objects.create(
+			username='therapist_legacy_address_update',
+			name='Therapist Legacy Address Update',
+			email='therapist_legacy_address_update@example.com',
+			alamat='Alamat Awal',
+			kota='Jakarta Selatan',
+		)
+		self.client.force_authenticate(user=self.admin)
+
+		response = self.client.patch(
+			f'/api/therapists/{therapist.id}/',
+			{
+				'address': 'Alamat dari legacy field update',
+				'kota': 'Depok',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_200_OK)
+		therapist.refresh_from_db()
+		self.assertEqual(therapist.alamat, 'Alamat dari legacy field update')
+		self.assertEqual(response.data['alamat'], 'Alamat dari legacy field update')
+		self.assertEqual(response.data['address'], 'Alamat dari legacy field update')
 
 	@patch('therapist.serializers.geocode_location_from_address')
 	def test_update_alamat_therapist_auto_geocode_fail_graceful(self, mock_geocode):
@@ -336,6 +385,21 @@ class TherapistTimetableAPITest(APITestCase):
 
 		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+	def test_reject_weekly_non_30_minute_slot(self):
+		self.client.force_authenticate(user=self.admin)
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/weekly-schedule/',
+			{
+				'day_of_week': 0,
+				'start_time': '13:15:00',
+				'end_time': '15:00:00',
+				'is_active': True,
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 	def test_create_date_override_valid(self):
 		self.client.force_authenticate(user=self.admin)
 		target_date = date.today() + timedelta(days=1)
@@ -373,6 +437,23 @@ class TherapistTimetableAPITest(APITestCase):
 				'override_type': 'AVAILABLE',
 				'start_time': '12:00:00',
 				'end_time': '14:00:00',
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+	def test_reject_date_override_non_30_minute_slot(self):
+		self.client.force_authenticate(user=self.admin)
+		target_date = date.today() + timedelta(days=1)
+
+		response = self.client.post(
+			f'/api/admin/therapists/{self.therapist.id}/date-overrides/',
+			{
+				'date': target_date.isoformat(),
+				'override_type': 'UNAVAILABLE',
+				'start_time': '13:00:00',
+				'end_time': '15:15:00',
 			},
 			format='json',
 		)

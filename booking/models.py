@@ -193,6 +193,12 @@ class Booking(models.Model):
         help_text="Internal notes (visible to staff only)"
     )
 
+    cancellation_reason = models.TextField(
+        blank=True,
+        default="",
+        help_text="Reason required when booking is cancelled"
+    )
+
     voucher_code = models.CharField(
         max_length=100,
         blank=True,
