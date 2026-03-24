@@ -238,4 +238,7 @@ SIMPLE_JWT = {
 }
 
 # Public frontend route that opens the review form from QR links.
-REVIEW_FORM_BASE_URL = env('REVIEW_FORM_BASE_URL', default='http://localhost:5173/review/create')
+REVIEW_FORM_BASE_URL = env(
+    'REVIEW_FORM_BASE_URL',
+    default='https://sinaira-fe-staging.vercel.app/review/create',
+)
