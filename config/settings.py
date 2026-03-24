@@ -172,6 +172,17 @@ if DEBUG:
 else:
     CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=[])
 
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=[])
+CORS_ALLOW_CREDENTIALS = env.bool('CORS_ALLOW_CREDENTIALS', default=True)
+
+# Railway / reverse proxy HTTPS handling
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+
+# Secure cookies in production
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
 # REST Framework settings
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -227,4 +238,7 @@ SIMPLE_JWT = {
 }
 
 # Public frontend route that opens the review form from QR links.
-REVIEW_FORM_BASE_URL = env('REVIEW_FORM_BASE_URL', default='http://localhost:5173/review/create')
+REVIEW_FORM_BASE_URL = env(
+    'REVIEW_FORM_BASE_URL',
+    default='https://sinaira-fe-staging.vercel.app/review/create',
+)
