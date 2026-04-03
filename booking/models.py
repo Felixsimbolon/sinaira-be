@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import connection, models
 from django.conf import settings
 from django.db import transaction
 from datetime import date, datetime, time
@@ -7,18 +7,30 @@ import string
 import secrets
 
 
+def _booking_id_column_exists() -> bool:
+    try:
+        with connection.cursor() as cursor:
+            description = connection.introspection.get_table_description(
+                cursor,
+                Booking._meta.db_table,
+            )
+        return any(column.name == "booking_id" for column in description)
+    except Exception:
+        return False
+
+
 def generate_booking_id():
     """Generate a unique 6-digit alphanumeric booking ID."""
     while True:
         # Generate 6 random characters (uppercase letters and digits)
         booking_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        # Check if this ID already exists (with exception handling for migrations)
-        try:
-            if not Booking.objects.filter(booking_id=booking_id).exists():
-                return booking_id
-        except Exception:
-            # During migrations, the column might not exist yet
-            # In that case, just return the generated ID
+
+        # During migrations the booking_id column may not exist yet.
+        # Avoid querying it until the schema is ready to prevent transaction abort.
+        if not _booking_id_column_exists():
+            return booking_id
+
+        if not Booking.objects.filter(booking_id=booking_id).exists():
             return booking_id
 
 
