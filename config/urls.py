@@ -30,4 +30,5 @@ urlpatterns = [
     path('api/', include('dashboard.urls')),
     path('api/', include('layanan.urls')),
     path('api/', include('event.urls')),
+    path('api/', include('inventory.urls')),
 ]
