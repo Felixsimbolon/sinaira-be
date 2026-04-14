@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import models
 
 
@@ -33,6 +34,10 @@ class Inventory(models.Model):
     lokasi = models.CharField(max_length=20, choices=Lokasi.choices, default=Lokasi.CILEGON)
     jumlah_stok = models.PositiveIntegerField()
     threshold_minimum = models.PositiveIntegerField()
+    usage_per_unit = models.PositiveIntegerField(
+        default=1,
+        help_text="Kapasitas penggunaan per 1 unit item (harus > 0).",
+    )
     keterangan = models.TextField(blank=True, default="")
     is_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -44,3 +49,92 @@ class Inventory(models.Model):
 
     def __str__(self) -> str:
         return self.nama_barang
+
+
+class TherapistSupplyAssignment(models.Model):
+    """
+    Assignment bahan inventory ke therapist.
+    Satu therapist bisa punya beberapa assignment untuk item yang sama.
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        EXHAUSTED = "EXHAUSTED", "Exhausted"
+        INACTIVE = "INACTIVE", "Inactive"
+
+    item = models.ForeignKey(
+        Inventory,
+        on_delete=models.CASCADE,
+        related_name="supply_assignments",
+        help_text="Item inventory yang di-assign.",
+    )
+    therapist = models.ForeignKey(
+        "therapist.Therapist",
+        on_delete=models.CASCADE,
+        related_name="supply_assignments",
+        help_text="Therapist yang menerima assignment.",
+    )
+    quantity_assigned = models.PositiveIntegerField(
+        help_text="Berapa unit item yang dibawa therapist.",
+    )
+    usage_per_unit = models.PositiveIntegerField(
+        help_text="Snapshot usagePerUnit dari inventory saat assignment dibuat.",
+    )
+    total_usage = models.PositiveIntegerField(
+        help_text="quantityAssigned * usagePerUnit (dihitung otomatis).",
+    )
+    remaining_usage = models.PositiveIntegerField(
+        help_text="Sisa kapasitas penggunaan.",
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+    )
+    notes = models.TextField(blank=True, default="")
+
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="assignments_created",
+        help_text="User yang membuat assignment.",
+    )
+
+    # Audit / soft-delete
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assignments_updated",
+        help_text="User yang terakhir mengubah assignment.",
+    )
+    is_deleted = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deleted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assignments_deleted",
+        help_text="User yang menghapus assignment.",
+    )
+
+    class Meta:
+        ordering = ["-assigned_at"]
+        verbose_name = "therapist supply assignment"
+        verbose_name_plural = "therapist supply assignments"
+        indexes = [
+            models.Index(fields=["item", "therapist"]),
+            models.Index(fields=["therapist", "status"]),
+            models.Index(fields=["status"]),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"Assignment #{self.pk}: {self.item.nama_barang} → "
+            f"Therapist {self.therapist.name} (qty={self.quantity_assigned})"
+        )
