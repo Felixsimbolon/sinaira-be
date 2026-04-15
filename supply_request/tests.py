@@ -2,7 +2,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from inventory.models import Inventory
+from inventory.models import Inventory, TherapistSupplyAssignment
+from therapist.models import Therapist
 
 from .models import InventoryStockHistory, SupplyRequest
 
@@ -17,6 +18,13 @@ class SupplyRequestAPITestCase(APITestCase):
 		self.therapist = self._create_user("therapist01", "THERAPIST")
 		self.supervisor = self._create_user("supervisor01", "SUPERVISOR")
 		self.owner = self._create_user("owner01", "OWNER")
+		self.therapist_profile = Therapist.objects.create(
+			user=self.therapist,
+			username=self.therapist.username,
+			name=self.therapist.name,
+			email=self.therapist.email,
+			is_active=True,
+		)
 
 		self.active_item = Inventory.objects.create(
 			nama_barang="Minyak Relax",
@@ -81,6 +89,20 @@ class SupplyRequestAPITestCase(APITestCase):
 		)
 
 		self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+	def test_create_supply_request_rejects_missing_required_fields(self):
+		self.client.force_authenticate(user=self.therapist)
+
+		response = self.client.post(
+			self.endpoint,
+			{},
+			format="json",
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+		self.assertIn("itemId", response.data)
+		self.assertIn("quantity", response.data)
+		self.assertIn("reason", response.data)
 
 	def test_create_supply_request_rejects_invalid_quantity(self):
 		self.client.force_authenticate(user=self.therapist)
@@ -245,6 +267,45 @@ class SupplyRequestAPITestCase(APITestCase):
 		self.assertEqual(history.previous_stock, 20)
 		self.assertEqual(history.new_stock, 16)
 		self.assertEqual(history.quantity_changed, -4)
+		self.assertEqual(
+			TherapistSupplyAssignment.objects.filter(
+				item=self.active_item,
+				therapist=self.therapist_profile,
+				quantity_assigned=4,
+				assigned_by=self.supervisor,
+			).count(),
+			1,
+		)
+
+		assignment = TherapistSupplyAssignment.objects.get(item=self.active_item, therapist=self.therapist_profile)
+		self.assertEqual(assignment.usage_per_unit, self.active_item.usage_per_unit)
+		self.assertEqual(assignment.total_usage, 4 * self.active_item.usage_per_unit)
+		self.assertEqual(assignment.remaining_usage, 4 * self.active_item.usage_per_unit)
+
+	def test_patch_supply_request_approve_fails_when_therapist_profile_missing(self):
+		therapist_without_profile = self._create_user("therapist-no-profile", "THERAPIST")
+		req = SupplyRequest.objects.create(
+			item=self.active_item,
+			quantity=4,
+			reason="Kebutuhan sesi malam",
+			created_by=therapist_without_profile,
+		)
+
+		self.client.force_authenticate(user=self.supervisor)
+		response = self.client.patch(
+			self._detail_endpoint(req.id),
+			{"status": SupplyRequest.Status.APPROVED},
+			format="json",
+		)
+
+		self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+		req.refresh_from_db()
+		self.active_item.refresh_from_db()
+		self.assertEqual(req.status, SupplyRequest.Status.PENDING)
+		self.assertEqual(self.active_item.jumlah_stok, 20)
+		self.assertEqual(InventoryStockHistory.objects.filter(supply_request=req).count(), 0)
+		self.assertEqual(TherapistSupplyAssignment.objects.filter(item=self.active_item).count(), 0)
 
 	def test_patch_supply_request_approve_rejects_when_stock_insufficient(self):
 		self.active_item.jumlah_stok = 2
@@ -271,6 +332,7 @@ class SupplyRequestAPITestCase(APITestCase):
 		self.assertEqual(req.status, SupplyRequest.Status.PENDING)
 		self.assertEqual(self.active_item.jumlah_stok, 2)
 		self.assertEqual(InventoryStockHistory.objects.filter(supply_request=req).count(), 0)
+		self.assertEqual(TherapistSupplyAssignment.objects.filter(item=self.active_item).count(), 0)
 
 	def test_patch_supply_request_reject_success_without_stock_change(self):
 		req = SupplyRequest.objects.create(
@@ -294,6 +356,7 @@ class SupplyRequestAPITestCase(APITestCase):
 		self.assertEqual(req.status, SupplyRequest.Status.REJECTED)
 		self.assertEqual(self.active_item.jumlah_stok, 20)
 		self.assertEqual(InventoryStockHistory.objects.filter(supply_request=req).count(), 0)
+		self.assertEqual(TherapistSupplyAssignment.objects.filter(item=self.active_item).count(), 0)
 
 	def test_patch_supply_request_requires_pending_status(self):
 		req = SupplyRequest.objects.create(

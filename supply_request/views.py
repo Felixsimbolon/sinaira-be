@@ -6,7 +6,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from inventory.models import Inventory
+from inventory.models import Inventory, TherapistSupplyAssignment
+from therapist.models import Therapist
 
 from .models import InventoryStockHistory, SupplyRequest
 from .permissions import IsSupervisorRole, IsTherapistRole
@@ -16,6 +17,18 @@ from .serializers import (
 	SupplyRequestReadSerializer,
 	SupplyRequestStatusUpdateSerializer,
 )
+
+
+def _resolve_therapist_profile(user):
+	therapist_profile = getattr(user, "therapist_profile", None)
+	if therapist_profile is not None:
+		return therapist_profile
+
+	therapist_profile = Therapist.objects.filter(user=user).first()
+	if therapist_profile is not None:
+		return therapist_profile
+
+	return Therapist.objects.filter(username=user.username).first()
 
 
 class SupplyRequestCollectionView(APIView):
@@ -166,6 +179,24 @@ class SupplyRequestDetailView(APIView):
 							status=status.HTTP_400_BAD_REQUEST,
 						)
 
+					therapist_profile = _resolve_therapist_profile(supply_request.created_by)
+					if therapist_profile is None:
+						return Response(
+							{
+								"error": (
+									"Profil therapist untuk pengaju supply request "
+									"tidak ditemukan."
+								)
+							},
+							status=status.HTTP_400_BAD_REQUEST,
+						)
+
+					if item.usage_per_unit < 1:
+						return Response(
+							{"error": "Data usage_per_unit item tidak valid."},
+							status=status.HTTP_400_BAD_REQUEST,
+						)
+
 					previous_stock = item.jumlah_stok
 					new_stock = previous_stock - supply_request.quantity
 					item.jumlah_stok = new_stock
@@ -179,6 +210,23 @@ class SupplyRequestDetailView(APIView):
 						new_stock=new_stock,
 						changed_by=request.user,
 						note="Pengurangan stok dari approval supply request.",
+					)
+
+					usage_per_unit = item.usage_per_unit
+					total_usage = supply_request.quantity * usage_per_unit
+
+					TherapistSupplyAssignment.objects.create(
+						item=item,
+						therapist=therapist_profile,
+						quantity_assigned=supply_request.quantity,
+						usage_per_unit=usage_per_unit,
+						total_usage=total_usage,
+						remaining_usage=total_usage,
+						status=TherapistSupplyAssignment.Status.ACTIVE,
+						notes=(
+							f"Auto assignment dari supply request #{supply_request.id}."
+						),
+						assigned_by=request.user,
 					)
 
 				supply_request.status = target_status

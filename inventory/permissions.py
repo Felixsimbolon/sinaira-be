@@ -16,3 +16,21 @@ class IsOwnerRole(BasePermission):
         if not user or not user.is_authenticated:
             return False
         return getattr(user, "role", None) == "OWNER"
+
+
+class IsOwnerOrSupervisor(BasePermission):
+    """
+    Hanya role OWNER dan SUPERVISOR yang boleh mengakses endpoint
+    therapist supply assignment.
+    """
+
+    message = "Hanya OWNER atau SUPERVISOR yang dapat mengelola assignment bahan."
+
+    ALLOWED_ROLES = {"OWNER", "SUPERVISOR"}
+
+    def has_permission(self, request: Request, view: APIView) -> bool:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        return getattr(user, "role", None) in self.ALLOWED_ROLES
+
