@@ -31,4 +31,5 @@ urlpatterns = [
     path('api/', include('layanan.urls')),
     path('api/', include('event.urls')),
     path('api/', include('inventory.urls')),
+    path('api/', include('supply_request.urls')),
 ]
