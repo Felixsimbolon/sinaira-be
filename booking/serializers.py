@@ -56,6 +56,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'tgl_treatment',
             'jam_treatment',
             'perawatan_pilihan',
+            'layanans',
             'harga',
             'aromatherapy_oil',
             'kondisi_khusus',
@@ -279,6 +280,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             'tgl_treatment',
             'jam_treatment',
             'perawatan_pilihan',
+            'layanans',
             'harga',
             'total_pembayaran',
             'aromatherapy_oil',
@@ -452,6 +454,13 @@ class BookingStatusUpdateSerializer(serializers.ModelSerializer):
             with transaction.atomic():
                 instance.save(update_fields=[*update_fields, 'updated_at'])
                 instance.create_change_logs_from_snapshot(old_snapshot, changed_by=changed_by)
+            
+            # Post-save trigger for COMPLETED
+            # Check old_snapshot to avoid double trigger if it was already COMPLETED
+            if 'status' in validated_data and validated_data['status'] == Booking.BookingStatus.COMPLETED:
+                if old_snapshot.get('status') != Booking.BookingStatus.COMPLETED:
+                    from inventory.services import record_supply_usage_for_completed_booking
+                    record_supply_usage_for_completed_booking(instance)
 
         return instance
 
@@ -500,7 +509,13 @@ class TherapistBookingStatusUpdateSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         request = self.context.get('request')
         changed_by = request.user if request and request.user.is_authenticated else None
+        old_status = instance.status
         instance.update_status(validated_data['status'], changed_by=changed_by)
+        
+        if validated_data['status'] == Booking.BookingStatus.COMPLETED and old_status != Booking.BookingStatus.COMPLETED:
+            from inventory.services import record_supply_usage_for_completed_booking
+            record_supply_usage_for_completed_booking(instance)
+            
         return instance
 
 

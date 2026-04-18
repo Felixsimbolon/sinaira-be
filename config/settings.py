@@ -62,6 +62,8 @@ INSTALLED_APPS = [
     'inventory',
     'membership',
     'layanan',
+    'event',
+    'supply_request',
 ]
 
 MIDDLEWARE = [

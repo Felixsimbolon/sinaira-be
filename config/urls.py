@@ -30,4 +30,7 @@ urlpatterns = [
     path('api/', include('review.urls')),
     path('api/', include('dashboard.urls')),
     path('api/', include('layanan.urls')),
+    path('api/', include('event.urls')),
+    path('api/', include('inventory.urls')),
+    path('api/', include('supply_request.urls')),
 ]
