@@ -5,17 +5,22 @@ from rest_framework.views import APIView
 
 class IsOwnerRole(BasePermission):
     """
-    Hanya role OWNER yang boleh mengakses endpoint inventori.
-    SUPERVISOR, ADMIN, THERAPIST → 403.
+    Role yang boleh mengelola inventori: OWNER, SUPERVISOR, ADMIN.
+    THERAPIST → 403.
+
+    Nama class dipertahankan (historis) agar tidak memecah import lain,
+    tetapi cakupan role sudah diperluas sesuai kebutuhan bisnis baru.
     """
 
-    message = "Hanya pemilik (OWNER) yang dapat mengelola inventori."
+    message = "Hanya OWNER, SUPERVISOR, atau ADMIN yang dapat mengelola inventori."
+
+    ALLOWED_ROLES = {"OWNER", "SUPERVISOR", "ADMIN"}
 
     def has_permission(self, request: Request, view: APIView) -> bool:
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        return getattr(user, "role", None) == "OWNER"
+        return getattr(user, "role", None) in self.ALLOWED_ROLES
 
 
 class IsOwnerOrSupervisor(BasePermission):

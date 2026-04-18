@@ -718,4 +718,3 @@ class ParseWhatsAppMessageView(APIView):
 
         extracted = extract_booking_from_whatsapp_message(message)
         return Response(extracted, status=status.HTTP_200_OK)
-

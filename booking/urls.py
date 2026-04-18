@@ -28,7 +28,7 @@ urlpatterns = [
     
     # Check phone number (GET with ?no_hp=xxx)
     path('bookings/check-phone/', CheckPhoneNumberView.as_view(), name='check-phone'),
-    
+
     # Get booking history (GET with ?no_hp=xxx)
     path('bookings/history/', CustomerBookingHistoryView.as_view(), name='booking-history'),
     

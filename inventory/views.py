@@ -15,10 +15,34 @@ from .serializers import (
 )
 
 
+def _find_duplicate_inventory(*, nama_barang: str, lokasi: str, exclude_pk: int | None = None):
+    """
+    Find an existing, non-deleted Inventory row with the same (nama_barang, lokasi)
+    pair using case-insensitive name matching. Whitespace is ignored.
+    """
+    normalized_name = (nama_barang or "").strip()
+    if not normalized_name:
+        return None
+    qs = Inventory.objects.filter(
+        is_deleted=False,
+        lokasi=lokasi,
+        nama_barang__iexact=normalized_name,
+    )
+    if exclude_pk is not None:
+        qs = qs.exclude(pk=exclude_pk)
+    return qs.first()
+
+
 class InventoryViewSet(viewsets.ModelViewSet):
     """
     OWNER only. Daftar hanya baris is_deleted=False.
     DELETE = soft delete (200 OK).
+
+    Duplicate handling:
+      - POST dengan (nama_barang, lokasi) yang sudah ada → 409 Conflict dengan
+        field ``existing_item`` agar FE bisa mengarahkan user ke halaman edit.
+      - PUT yang mengganti nama menjadi collision dengan item lain di lokasi
+        yang sama → 409 Conflict dengan behaviour yang sama.
     """
 
     permission_classes = [IsAuthenticated, IsOwnerRole]
@@ -42,6 +66,24 @@ class InventoryViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         write = InventoryWriteSerializer(data=request.data)
         write.is_valid(raise_exception=True)
+
+        duplicate = _find_duplicate_inventory(
+            nama_barang=write.validated_data.get("nama_barang", ""),
+            lokasi=write.validated_data.get("lokasi", ""),
+        )
+        if duplicate is not None:
+            return Response(
+                {
+                    "detail": (
+                        f"Item '{duplicate.nama_barang}' sudah ada di lokasi "
+                        f"{duplicate.lokasi}. Silakan edit data yang sudah ada."
+                    ),
+                    "code": "duplicate_inventory",
+                    "existing_item": InventorySerializer(duplicate).data,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         instance = write.save()
         return Response(
             InventorySerializer(instance).data,
@@ -53,6 +95,27 @@ class InventoryViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         write = InventoryWriteSerializer(instance, data=request.data, partial=partial)
         write.is_valid(raise_exception=True)
+
+        new_nama = write.validated_data.get("nama_barang", instance.nama_barang)
+        new_lokasi = write.validated_data.get("lokasi", instance.lokasi)
+        duplicate = _find_duplicate_inventory(
+            nama_barang=new_nama,
+            lokasi=new_lokasi,
+            exclude_pk=instance.pk,
+        )
+        if duplicate is not None:
+            return Response(
+                {
+                    "detail": (
+                        f"Nama '{duplicate.nama_barang}' sudah dipakai item lain di lokasi "
+                        f"{duplicate.lokasi}. Silakan gunakan nama yang berbeda atau edit item tersebut."
+                    ),
+                    "code": "duplicate_inventory",
+                    "existing_item": InventorySerializer(duplicate).data,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         write.save()
         instance.refresh_from_db()
         return Response(InventorySerializer(instance).data, status=status.HTTP_200_OK)
@@ -230,4 +293,39 @@ class TherapistSupplyAssignmentViewSet(viewsets.ViewSet):
         assignment.save()
 
         return Response(status=status.HTTP_200_OK)
+
+
+from rest_framework.views import APIView
+
+class SupplyTrackerView(APIView):
+    """
+    Endpoint read-only untuk kalkulasi pemakaian bahan per therapist dan estimasi.
+    Hanya dibuka untuk SUPERVISOR / OWNER.
+    """
+    permission_classes = [IsAuthenticated, IsOwnerOrSupervisor]
+
+    def get(self, request, *args, **kwargs):
+        from .services import calculate_supply_tracker
+        
+        start_date = request.query_params.get('startDate')
+        end_date = request.query_params.get('endDate')
+        item_id = request.query_params.get('itemId')
+        therapist_id = request.query_params.get('therapistId')
+
+        # Convert date strings if needed
+        # Service handles string-based filtering gracefully for 'YYYY-MM-DD' on native django DateFields
+        if start_date and end_date and start_date > end_date:
+            return Response(
+                {"detail": "startDate tidak boleh lebih besar dari endDate"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        data = calculate_supply_tracker(
+            start_date=start_date,
+            end_date=end_date,
+            item_id=item_id,
+            therapist_id=therapist_id
+        )
+
+        return Response(data, status=status.HTTP_200_OK)
 

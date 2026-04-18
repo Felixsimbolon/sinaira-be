@@ -18,7 +18,7 @@ class User(AbstractUser):
     # ── Role hierarchy map (for account CREATION) ─────────────────────
     # Maps each role to the set of roles it is allowed to create.
     ROLE_HIERARCHY: dict[str, set[str]] = {
-        Role.OWNER: {Role.SUPERVISOR, Role.ADMIN, Role.THERAPIST},
+        Role.OWNER: {Role.OWNER, Role.SUPERVISOR, Role.ADMIN, Role.THERAPIST},
         Role.SUPERVISOR: {Role.ADMIN, Role.THERAPIST},
         Role.ADMIN: {Role.THERAPIST},
         Role.THERAPIST: set(),  # Therapists cannot create any accounts

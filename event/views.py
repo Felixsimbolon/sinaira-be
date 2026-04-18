@@ -4,10 +4,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Promo
-from .permissions import IsOwnerOnly, PublicReadPermission
+from .permissions import IsAdminSupervisorOrOwner, IsOwnerOnly, PublicReadPermission
 from .repositories import PromoRepository
 from .serializers import PromoAdminListSerializer, PromoReadSerializer, PromoWriteSerializer
-from .services import PromoService
+from .services import PromoService, build_promo_recommendations
 
 
 class AdminPromoListCreateView(generics.ListCreateAPIView):
@@ -119,3 +119,22 @@ class PublicPromoDetailView(generics.RetrieveAPIView):
 
 	def get_queryset(self):
 		return self.repository.public_queryset()
+
+
+class PromoRecommendationListView(APIView):
+	"""
+	GET /api/recommendations/promos
+
+	Returns personalized promo recommendations for repeating customers
+	(customers with ≥ 3 completed bookings). Accessible to Owner, Supervisor,
+	and Admin roles only.
+	"""
+
+	permission_classes = [IsAdminSupervisorOrOwner]
+
+	def get(self, request):
+		recommendations = build_promo_recommendations()
+		return Response(
+			{"count": len(recommendations), "results": recommendations},
+			status=status.HTTP_200_OK,
+		)

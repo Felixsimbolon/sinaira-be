@@ -164,6 +164,13 @@ class Booking(models.Model):
         help_text="Selected treatment/service"
     )
 
+    layanans = models.ManyToManyField(
+        'layanan.Layanan',
+        blank=True,
+        related_name='bookings',
+        help_text="Mapped treatments/services (Many-to-Many)"
+    )
+
     harga = models.DecimalField(
         max_digits=12,
         decimal_places=2,
