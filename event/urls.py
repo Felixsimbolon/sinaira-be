@@ -5,6 +5,7 @@ from .views import (
     AdminPromoDetailView,
     AdminPromoListCreateView,
     AdminPromoUnarchiveView,
+    PromoRecommendationListView,
     PublicPromoDetailView,
     PublicPromoListView,
 )
@@ -18,4 +19,9 @@ urlpatterns = [
     path("admin/promos/<int:pk>/unarchive", AdminPromoUnarchiveView.as_view(), name="admin-promo-unarchive"),
     path("promos", PublicPromoListView.as_view(), name="public-promo-list"),
     path("promos/<int:pk>", PublicPromoDetailView.as_view(), name="public-promo-detail"),
+    path(
+        "recommendations/promos",
+        PromoRecommendationListView.as_view(),
+        name="recommendation-promo-list",
+    ),
 ]

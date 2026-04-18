@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Inventory, TherapistSupplyAssignment
+from .models import Inventory, SupplyUsageLog, TherapistSupplyAssignment
 
 
 @admin.register(Inventory)
@@ -36,4 +36,20 @@ class TherapistSupplyAssignmentAdmin(admin.ModelAdmin):
     list_filter = ("status", "is_deleted")
     search_fields = ("item__nama_barang", "therapist__name")
     raw_id_fields = ("item", "therapist", "assigned_by", "updated_by", "deleted_by")
+
+
+@admin.register(SupplyUsageLog)
+class SupplyUsageLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "item",
+        "therapist",
+        "jumlah",
+        "tanggal",
+        "booking",
+        "created_at",
+    )
+    list_filter = ("tanggal", "item", "therapist")
+    search_fields = ("item__nama_barang", "therapist__name", "booking__booking_id")
+    raw_id_fields = ("item", "therapist", "booking")
 
