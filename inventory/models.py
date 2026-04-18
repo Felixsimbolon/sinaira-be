@@ -138,3 +138,54 @@ class TherapistSupplyAssignment(models.Model):
             f"Assignment #{self.pk}: {self.item.nama_barang} → "
             f"Therapist {self.therapist.name} (qty={self.quantity_assigned})"
         )
+
+
+class SupplyUsageLog(models.Model):
+    """
+    Riwayat pemakaian item inventory oleh therapist, dicatat ketika
+    status booking menjadi COMPLETED berdasarkan assignment aktif.
+    """
+    item = models.ForeignKey(
+        Inventory,
+        on_delete=models.CASCADE,
+        related_name="usage_logs",
+    )
+    therapist = models.ForeignKey(
+        "therapist.Therapist",
+        on_delete=models.CASCADE,
+        related_name="supply_usage_logs",
+    )
+    jumlah = models.PositiveIntegerField(
+        help_text="Kuantitas penggunaan item."
+    )
+    tanggal = models.DateField(
+        help_text="Tanggal pemakaian (biasanya tanggal booking treatment)."
+    )
+    booking = models.ForeignKey(
+        "booking.Booking",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supply_usage_logs",
+        help_text="Booking terkait untuk jejak audit/idempotensi.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-tanggal", "-created_at"]
+        verbose_name_plural = "supply usage logs"
+        # Memastikan tidak ada double-log untuk kombinasi booking, item, dan therapist yang sama
+        constraints = [
+            models.UniqueConstraint(
+                fields=['booking', 'item', 'therapist'],
+                name='unique_booking_item_therapist_usage_log'
+            )
+        ]
+        indexes = [
+            models.Index(fields=["item", "therapist", "tanggal"]),
+            models.Index(fields=["tanggal"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.item.nama_barang} ({self.jumlah}) oleh {self.therapist.name} [{self.tanggal}]"
+

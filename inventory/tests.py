@@ -666,3 +666,132 @@ class TherapistSupplyAssignmentCRUDTest(APITestCase):
             format="json",
         )
         self.assertIsNotNone(resp.data["assigned_at"])
+
+
+from datetime import date, timedelta
+from layanan.models import Layanan, LayananSupplyConfig
+from booking.models import Booking
+
+class TherapistSupplyTrackerTest(APITestCase):
+    """Test calculations and integration of Supply Usage Tracker."""
+
+    def setUp(self):
+        self.url = "/api/supply-tracker/"
+        
+        self.owner = User.objects.create_user(
+            username="tracker_owner", email="tracker_owner@example.com", password="password", name="Tracker Owner", role=User.Role.OWNER
+        )
+        self.supervisor = User.objects.create_user(
+            username="tracker_supervisor", email="tracker_supervisor@example.com", password="password", name="Tracker Sup", role=User.Role.SUPERVISOR
+        )
+        self.therapist_user = User.objects.create_user(
+            username="tracker_therapist", email="tracker_therapist@example.com", password="password", name="Tracker Therapist", role=User.Role.THERAPIST
+        )
+        
+        from therapist.models import Therapist
+        self.therapist_profile = Therapist.objects.create(
+            user=self.therapist_user, name=self.therapist_user.name, email=self.therapist_user.email
+        )
+        
+        self.customer_user = User.objects.create_user(
+            username="customer", email="customer@example.com", password="password", name="Customer"
+        )
+        self.admin_user = User.objects.create_user(
+            username="tracker_admin", email="tracker_admin@example.com", password="password", name="Tracker Admin", role=User.Role.ADMIN
+        )
+
+        self.item = Inventory.objects.create(
+            nama_barang="Tracker Minyak",
+            kategori=Inventory.Kategori.BAHAN_BODY_MASSAGE,
+            jumlah_stok=100, threshold_minimum=10, usage_per_unit=5
+        )
+
+        self.layanan = Layanan.objects.create(
+            nama="Tracker Massage", harga=200000, durasi_menit=60
+        )
+        self.config = LayananSupplyConfig.objects.create(
+            layanan=self.layanan, item=self.item, jumlah_per_use=2
+        )
+
+        # Assignment active for therapist
+        self.assignment = TherapistSupplyAssignment.objects.create(
+            item=self.item, therapist=self.therapist_profile, quantity_assigned=2,
+            usage_per_unit=5, total_usage=10, remaining_usage=10, status=TherapistSupplyAssignment.Status.ACTIVE
+        )
+
+        self.booking = Booking.objects.create(
+            nama="Customer Tracker",
+            no_hp="0812345678",
+            kota="Jakarta",
+            tgl_treatment=date.today(),
+            jam_treatment="10:00:00",
+            perawatan_pilihan="Tracker Massage",
+            harga=200000,
+            status=Booking.BookingStatus.PAID,
+            therapist=self.therapist_user
+        )
+        self.booking.layanans.add(self.layanan)
+
+    # 1-3. Auth & Permission
+    def test_unauth_returns_401(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_admin_returns_403(self):
+        self.client.force_authenticate(self.admin_user)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+        
+    def test_empty_data_returns_200_empty_arrays(self):
+        self.client.force_authenticate(self.owner)
+        resp = self.client.get(self.url, {"itemId": 999})
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["riwayatPemakaian"], [])
+        self.assertEqual(resp.data["summaryPerItem"], [])
+        self.assertEqual(resp.data["rankingPenggunaanPerTherapist"], [])
+
+    # Integrasi update_status
+    def test_booking_completed_triggers_log_and_deducts_fifo(self):
+        self.client.force_authenticate(self.owner)
+        
+        self.booking.status = Booking.BookingStatus.CHECKED_OUT
+        self.booking.save(update_fields=['status'])
+        
+        # Trigger completed
+        booking_update_url = f"/api/admin/bookings/{self.booking.booking_id}/status/"
+        resp = self.client.patch(booking_update_url, {"status": Booking.BookingStatus.COMPLETED}, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        
+        # Verify log is created
+        from inventory.models import SupplyUsageLog
+        logs = SupplyUsageLog.objects.filter(booking=self.booking)
+        self.assertEqual(logs.count(), 1)
+        self.assertEqual(logs[0].jumlah, 2)
+        
+        # Verify assignment remaining_usage deducted
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.remaining_usage, 8)  # 10 - 2
+        
+    def test_tracker_calculates_correctly(self):
+        self.client.force_authenticate(self.owner)
+        self.booking.status = Booking.BookingStatus.CHECKED_OUT
+        self.booking.save(update_fields=['status'])
+        
+        booking_update_url = f"/api/admin/bookings/{self.booking.booking_id}/status/"
+        self.client.patch(booking_update_url, {"status": Booking.BookingStatus.COMPLETED}, format="json")
+        
+        self.client.force_authenticate(self.supervisor)
+        
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(resp.data["riwayatPemakaian"]), 1)
+        
+        summary = resp.data["summaryPerItem"][0]
+        self.assertEqual(summary["totalTerpakai"], 2)
+        self.assertEqual(summary["rataRataPemakaianHarian"], 2.0)
+        self.assertIsNotNone(summary["estimasiHabis"])
+        
+        rank = resp.data["rankingPenggunaanPerTherapist"][0]
+        self.assertEqual(rank["therapistId"], self.therapist_profile.id)
+        self.assertEqual(rank["totalPemakaian"], 2)
+        self.assertEqual(rank["rank"], 1)

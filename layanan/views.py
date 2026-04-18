@@ -1,6 +1,7 @@
+from django.db.models import Prefetch
 from rest_framework import viewsets
 
-from .models import Layanan, LayananKategori
+from .models import Layanan, LayananKategori, LayananSupplyConfig
 from .permissions import LayananPermission
 from .serializers import LayananKategoriSerializer, LayananSerializer
 
@@ -14,14 +15,18 @@ class LayananKategoriViewSet(viewsets.ModelViewSet):
 
 
 class LayananViewSet(viewsets.ModelViewSet):
-	queryset = Layanan.active_objects.select_related("kategori")
 	serializer_class = LayananSerializer
 	permission_classes = [LayananPermission]
 	lookup_field = "layanan_id"
 	lookup_url_kwarg = "layanan_id"
 
 	def get_queryset(self):
-		queryset = super().get_queryset()
+		queryset = Layanan.active_objects.select_related("kategori").prefetch_related(
+			Prefetch(
+				"supply_configs",
+				queryset=LayananSupplyConfig.objects.filter(is_deleted=False).select_related("item"),
+			)
+		)
 		kategori_id = self.request.query_params.get("kategori_id")
 		is_active = self.request.query_params.get("is_active")
 

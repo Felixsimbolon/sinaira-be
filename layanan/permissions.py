@@ -6,11 +6,11 @@ from rest_framework.views import APIView
 class LayananPermission(BasePermission):
     """
     - Semua user dapat lihat daftar/detail (GET, HEAD, OPTIONS)
-    - CREATE/UPDATE/DELETE hanya OWNER, SUPERVISOR, ADMIN
+    - CREATE/UPDATE/DELETE hanya OWNER, SUPERVISOR
     """
 
     message = "Anda tidak memiliki akses."
-    ALLOWED_ROLES = {"OWNER", "SUPERVISOR", "ADMIN"}
+    ALLOWED_ROLES = {"OWNER", "SUPERVISOR"}
 
     def has_permission(self, request: Request, view: APIView) -> bool:
         if request.method in SAFE_METHODS:

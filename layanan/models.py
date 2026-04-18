@@ -69,3 +69,38 @@ class Layanan(models.Model):
 	def __str__(self):
 		kategori_nama = self.kategori.nama if self.kategori else "Tanpa Kategori"
 		return f"{self.nama} ({kategori_nama}) - {self.harga}"
+
+
+class LayananSupplyConfig(models.Model):
+	layanan = models.ForeignKey(
+		Layanan,
+		on_delete=models.CASCADE,
+		related_name="supply_configs"
+	)
+	item = models.ForeignKey(
+		"inventory.Inventory",
+		on_delete=models.CASCADE,
+		related_name="layanan_configs"
+	)
+	jumlah_per_use = models.PositiveIntegerField(
+		help_text="Kuantitas pemakaian per 1 sesi layanan (harus > 0)."
+	)
+	is_deleted = models.BooleanField(default=False)
+	deleted_at = models.DateTimeField(null=True, blank=True)
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
+	class Meta:
+		constraints = [
+			models.UniqueConstraint(
+				fields=["layanan", "item"],
+				condition=models.Q(is_deleted=False),
+				name="unique_active_layanan_item_config",
+			),
+		]
+		indexes = [
+			models.Index(fields=["layanan", "is_deleted"]),
+		]
+
+	def __str__(self):
+		return f"{self.layanan.nama} - {self.item.nama_barang} ({self.jumlah_per_use})"
