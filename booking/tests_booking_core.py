@@ -1,11 +1,95 @@
 from datetime import date, time, timedelta
 
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import User
 from layanan.models import Layanan, LayananKategori
 from booking.models import Booking
+
+
+class BookingCheckPhoneEndpointAPITest(APITestCase):
+    def _create_booking(self, **overrides):
+        payload = {
+            'nama': 'Existing Customer',
+            'alamat': 'Jl. Mawar No. 1',
+            'kota': 'Serang',
+            'no_hp': '081234567890',
+            'tgl_treatment': date.today() + timedelta(days=1),
+            'jam_treatment': time(10, 0),
+            'perawatan_pilihan': 'Swedish Massage',
+            'aromatherapy_oil': Booking.AromatherapyChoice.JASMINE,
+            'status': Booking.BookingStatus.PENDING,
+        }
+        payload.update(overrides)
+        return Booking.objects.create(**payload)
+
+    def test_check_phone_existing_phone_returns_latest_customer_name(self):
+        self._create_booking(nama='Existing Customer', no_hp='081234567890')
+
+        response = self.client.get('/api/bookings/check-phone/?no_hp=081234567890', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['no_hp'], '081234567890')
+        self.assertTrue(response.data['has_bookings'])
+        self.assertEqual(response.data['bookings_count'], 1)
+        self.assertEqual(response.data['customer_name'], 'Existing Customer')
+
+    def test_check_phone_multiple_bookings_returns_latest_created_name(self):
+        old_booking = self._create_booking(nama='Old Name', no_hp='081234567890')
+        new_booking = self._create_booking(nama='New Name', no_hp='081234567890')
+        Booking.objects.filter(pk=old_booking.pk).update(
+            created_at=timezone.now() - timedelta(days=2)
+        )
+        Booking.objects.filter(pk=new_booking.pk).update(
+            created_at=timezone.now() - timedelta(days=1)
+        )
+
+        response = self.client.get('/api/bookings/check-phone/?no_hp=081234567890', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['bookings_count'], 2)
+        self.assertEqual(response.data['customer_name'], 'New Name')
+
+    def test_check_phone_no_booking_returns_null_customer_name(self):
+        response = self.client.get('/api/bookings/check-phone/?no_hp=081234567890', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['no_hp'], '081234567890')
+        self.assertFalse(response.data['has_bookings'])
+        self.assertEqual(response.data['bookings_count'], 0)
+        self.assertIsNone(response.data['customer_name'])
+
+    def test_check_phone_matches_zero_and_62_phone_variants(self):
+        self._create_booking(nama='Variant Customer', no_hp='081234567890')
+
+        response = self.client.get('/api/bookings/check-phone/?no_hp=6281234567890', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['has_bookings'])
+        self.assertEqual(response.data['bookings_count'], 1)
+        self.assertEqual(response.data['customer_name'], 'Variant Customer')
+
+    def test_check_phone_matches_formatted_stored_phone_number(self):
+        self._create_booking(nama='Formatted Customer', no_hp='+62 812-3456-7890')
+
+        response = self.client.get('/api/bookings/check-phone/?no_hp=081234567890', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['has_bookings'])
+        self.assertEqual(response.data['bookings_count'], 1)
+        self.assertEqual(response.data['customer_name'], 'Formatted Customer')
+
+    def test_check_phone_empty_booking_name_returns_null_customer_name(self):
+        self._create_booking(nama='', no_hp='081234567890')
+
+        response = self.client.get('/api/bookings/check-phone/?no_hp=081234567890', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['has_bookings'])
+        self.assertEqual(response.data['bookings_count'], 1)
+        self.assertIsNone(response.data['customer_name'])
 
 
 class BookingCreateEndpointAPITest(APITestCase):

@@ -152,17 +152,21 @@ class CheckPhoneNumberView(APIView):
             Value(''),
         )
 
-        bookings_count = (
+        matching_bookings = (
             Booking.objects
             .annotate(normalized_phone=normalized_no_hp)
             .filter(normalized_phone__in=phone_candidates)
-            .count()
         )
+
+        bookings_count = matching_bookings.count()
+        latest_booking = matching_bookings.order_by("-created_at").first()
+        customer_name = latest_booking.nama if latest_booking and latest_booking.nama else None
         
         return Response({
             'no_hp': self._digits_only(no_hp),
             'has_bookings': bookings_count > 0,
-            'bookings_count': bookings_count
+            'bookings_count': bookings_count,
+            'customer_name': customer_name,
         })
 
 
