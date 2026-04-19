@@ -31,20 +31,27 @@ class PromoService:
         self.repository = repository or PromoRepository()
 
     def create_promo(self, *, validated_data: dict, user) -> Promo:
+        applicable_services = validated_data.pop("applicable_services", None)
         now = timezone.now()
-        return self.repository.create(
+        promo = self.repository.create(
             **validated_data,
             created_by=user,
             updated_by=user,
             created_at=now,
             updated_at=now,
         )
+        if applicable_services is not None:
+            promo.applicable_services.set(applicable_services)
+        return promo
 
     def update_promo(self, *, promo: Promo, validated_data: dict, user) -> Promo:
+        applicable_services = validated_data.pop("applicable_services", None)
         for key, value in validated_data.items():
             setattr(promo, key, value)
         promo.updated_by = user
         self.repository.save(promo)
+        if applicable_services is not None:
+            promo.applicable_services.set(applicable_services)
         return promo
 
     def archive_promo(self, *, promo: Promo, user) -> Promo:

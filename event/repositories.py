@@ -7,7 +7,7 @@ class PromoRepository:
     """Repository layer for Promo persistence and query composition."""
 
     def admin_queryset(self) -> QuerySet[Promo]:
-        return Promo.objects.select_related("created_by", "updated_by").all()
+        return Promo.active_objects.select_related("created_by", "updated_by")
 
     def public_queryset(self) -> QuerySet[Promo]:
         return Promo.active_objects.filter(posting_state=Promo.PostingState.PUBLISHED)
