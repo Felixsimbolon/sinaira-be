@@ -176,6 +176,88 @@ class BookingCreateEndpointAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn('perawatan_pilihan', response.data)
 
+    def test_create_booking_applies_loyalty_discount_as_cheapest_service(self):
+        for idx in range(4):
+            Booking.objects.create(
+                nama=f'Customer Lama {idx}',
+                alamat='Jl. Lama',
+                kota='Serang',
+                no_hp='6281234567890',
+                tgl_treatment=date.today() + timedelta(days=1),
+                jam_treatment=time(9, 0),
+                perawatan_pilihan='Swedish Massage',
+                aromatherapy_oil=Booking.AromatherapyChoice.JASMINE,
+                status=Booking.BookingStatus.COMPLETED,
+                harga=180000,
+                total_pembayaran=180000,
+            )
+
+        response = self.client.post(
+            '/api/bookings/',
+            self._payload(
+                no_hp='081234567890',
+                perawatan_pilihan='Swedish Massage, Deep Tissue',
+                voucher_code='LOYALTY-4',
+            ),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        booking = Booking.objects.get(booking_id=response.data['data']['booking_id'])
+        self.assertEqual(float(booking.harga), 400000.00)
+        self.assertEqual(float(booking.total_pembayaran), 220000.00)
+        self.assertEqual(booking.voucher_code, 'LOYALTY-4')
+
+    def test_create_booking_rejects_loyalty_when_not_eligible(self):
+        for idx in range(3):
+            Booking.objects.create(
+                nama=f'Customer Baru {idx}',
+                alamat='Jl. Baru',
+                kota='Serang',
+                no_hp='081234567890',
+                tgl_treatment=date.today() + timedelta(days=1),
+                jam_treatment=time(9, 0),
+                perawatan_pilihan='Swedish Massage',
+                aromatherapy_oil=Booking.AromatherapyChoice.JASMINE,
+                status=Booking.BookingStatus.COMPLETED,
+                harga=180000,
+                total_pembayaran=180000,
+            )
+
+        response = self.client.post(
+            '/api/bookings/',
+            self._payload(voucher_code='LOYALTY-4'),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('voucher_code', response.data)
+
+    def test_create_booking_rejects_loyalty_after_passing_milestone(self):
+        for idx in range(5):
+            Booking.objects.create(
+                nama=f'Customer Loyal {idx}',
+                alamat='Jl. Loyal',
+                kota='Serang',
+                no_hp='081234567890',
+                tgl_treatment=date.today() + timedelta(days=1),
+                jam_treatment=time(9, 0),
+                perawatan_pilihan='Swedish Massage',
+                aromatherapy_oil=Booking.AromatherapyChoice.JASMINE,
+                status=Booking.BookingStatus.COMPLETED,
+                harga=180000,
+                total_pembayaran=180000,
+            )
+
+        response = self.client.post(
+            '/api/bookings/',
+            self._payload(voucher_code='LOYALTY-4'),
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('voucher_code', response.data)
+
 
 class BookingAdminListEndpointAPITest(APITestCase):
     def setUp(self):

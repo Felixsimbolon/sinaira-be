@@ -133,7 +133,6 @@ class CheckPhoneNumberView(APIView):
         
         phone_candidates = self._phone_candidates(no_hp)
 
-        # Normalize stored phone values by removing common separators/signs, then match variants.
         normalized_no_hp = Replace(
             Replace(
                 Replace(
@@ -152,23 +151,35 @@ class CheckPhoneNumberView(APIView):
             Value(''),
         )
 
+        base_qs = (
+            Booking.objects
+            .annotate(normalized_phone=normalized_no_hp)
+            .filter(normalized_phone__in=phone_candidates)
+        )
         matching_bookings = (
             Booking.objects
             .annotate(normalized_phone=normalized_no_hp)
             .filter(normalized_phone__in=phone_candidates)
         )
-
         bookings_count = matching_bookings.count()
         latest_booking = matching_bookings.order_by("-created_at").first()
         customer_name = latest_booking.nama if latest_booking and latest_booking.nama else None
+        
+
+        bookings_count = base_qs.count()
+        
+        # Hanya hitung yang COMPLETED untuk loyalty voucher
+        completed_bookings_count = base_qs.filter(
+            status=Booking.BookingStatus.COMPLETED
+        ).count()
         
         return Response({
             'no_hp': self._digits_only(no_hp),
             'has_bookings': bookings_count > 0,
             'bookings_count': bookings_count,
+            'completed_bookings_count': completed_bookings_count,
             'customer_name': customer_name,
         })
-
 
 # ──────────────────────────────────────────────────────────────────
 # ADMIN VIEWS (Staff Only: Owner, Supervisor, Admin)

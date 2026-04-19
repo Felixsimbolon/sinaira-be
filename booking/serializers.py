@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.db.models import F, Value
+from django.db.models.functions import Replace
 from decimal import Decimal
 from .models import Booking, BookingChangeLog
 from layanan.models import Layanan
@@ -43,6 +45,7 @@ def _get_max_booking_date_from_today(today: date) -> date:
 
 class BookingCreateSerializer(serializers.ModelSerializer):
     MINIMUM_BOOKING_TOTAL = 180000
+    LOYALTY_VISIT_THRESHOLDS = {4, 7, 10}
     promo_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
 
     class Meta:
@@ -81,10 +84,9 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         # Keep order while removing duplicates.
         return list(dict.fromkeys(names))
 
-    def _calculate_base_price_from_layanan(self, perawatan_pilihan: str):
-        selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+    def _resolve_selected_layanan_by_name(self, selected_names: list[str]) -> dict[str, Layanan]:
         if not selected_names:
-            return None
+            return {}
 
         layanan_qs = Layanan.active_objects.filter(
             is_active=True,
@@ -108,7 +110,57 @@ class BookingCreateSerializer(serializers.ModelSerializer):
                 }
             )
 
-        return sum(layanan_by_name[name][0].harga for name in selected_names)
+        return {name: layanan_by_name[name][0] for name in selected_names}
+
+    def _calculate_base_price_from_layanan(self, perawatan_pilihan: str):
+        selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+        if not selected_names:
+            return None
+
+        selected_layanan_by_name = self._resolve_selected_layanan_by_name(selected_names)
+        return sum(selected_layanan_by_name[name].harga for name in selected_names)
+
+    @staticmethod
+    def _phone_candidates(raw_phone: str) -> set[str]:
+        digits = ''.join(ch for ch in (raw_phone or '') if ch.isdigit())
+        candidates = {digits}
+
+        if digits.startswith('0') and len(digits) > 1:
+            candidates.add(f"62{digits[1:]}")
+        elif digits.startswith('62') and len(digits) > 2:
+            candidates.add(f"0{digits[2:]}")
+
+        return {item for item in candidates if item}
+
+    def _count_bookings_for_phone(self, no_hp: str) -> int:
+        phone_candidates = self._phone_candidates(no_hp)
+        if not phone_candidates:
+            return 0
+
+        normalized_no_hp = Replace(
+            Replace(
+                Replace(
+                    Replace(
+                        Replace(F('no_hp'), Value(' '), Value('')),
+                        Value('-'),
+                        Value(''),
+                    ),
+                    Value('+'),
+                    Value(''),
+                ),
+                Value('('),
+                Value(''),
+            ),
+            Value(')'),
+            Value(''),
+        )
+
+        return (
+            Booking.objects
+            .annotate(normalized_phone=normalized_no_hp)
+            .filter(normalized_phone__in=phone_candidates)
+            .count()
+        )
 
     def _calculate_discount_amount(self, *, base_price: int, perawatan_pilihan: str, no_hp: str, promo_id: int | None, voucher_code: str | None) -> Decimal:
         base_amount = Decimal(str(base_price))
@@ -162,13 +214,25 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             match = re.match(r'^LOYALTY-(\d+)$', voucher_code.strip().upper())
             if match:
                 required_visits = int(match.group(1))
-                prior_count = Booking.objects.filter(no_hp=no_hp).count()
-                if prior_count < required_visits:
+                if required_visits not in self.LOYALTY_VISIT_THRESHOLDS:
+                    raise serializers.ValidationError({'voucher_code': 'Voucher loyalty tidak valid.'})
+
+                prior_count = self._count_bookings_for_phone(no_hp)
+                if prior_count != required_visits:
                     raise serializers.ValidationError(
-                        {'voucher_code': f'Voucher ini berlaku mulai kunjungan ke-{required_visits}.'}
+                        {'voucher_code': f'Voucher ini hanya berlaku di kunjungan ke-{required_visits}.'}
                     )
-                percent = Decimal(str(required_visits))
-                return (base_amount * percent / Decimal('100')).quantize(Decimal('1'))
+
+                selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+                selected_layanan_by_name = self._resolve_selected_layanan_by_name(selected_names)
+                if not selected_layanan_by_name:
+                    return Decimal('0')
+
+                cheapest_price = min(
+                    Decimal(str(layanan.harga))
+                    for layanan in selected_layanan_by_name.values()
+                )
+                return min(cheapest_price, base_amount)
 
         return Decimal('0')
 
