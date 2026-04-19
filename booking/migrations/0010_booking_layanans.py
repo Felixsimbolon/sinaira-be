@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('booking', '0009_booking_cancellation_reason'),
+        ('booking', '0001_initial'),
         ('layanan', '0004_layanansupplyconfig'),
     ]
 

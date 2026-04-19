@@ -7,8 +7,8 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('inventory', '0003_add_usage_per_unit_and_supply_assignment'),
-        ('layanan', '0003_layanan_is_active'),
+        ('inventory', '0001_initial'),
+        ('layanan', '0001_initial'),
     ]
 
     operations = [
