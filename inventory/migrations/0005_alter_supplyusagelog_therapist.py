@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('inventory', '0004_supplyusagelog'),
-        ('therapist', '0013_merge_address_into_alamat_and_remove_address'),
+        ('therapist', '0001_initial'),
     ]
 
     operations = [

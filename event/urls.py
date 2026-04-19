@@ -8,6 +8,7 @@ from .views import (
     PromoRecommendationListView,
     PublicPromoDetailView,
     PublicPromoListView,
+    PublicPromoBookingListView,
 )
 
 app_name = "event"
@@ -18,6 +19,7 @@ urlpatterns = [
     path("admin/promos/<int:pk>/archive", AdminPromoArchiveView.as_view(), name="admin-promo-archive"),
     path("admin/promos/<int:pk>/unarchive", AdminPromoUnarchiveView.as_view(), name="admin-promo-unarchive"),
     path("promos", PublicPromoListView.as_view(), name="public-promo-list"),
+    path("promos/booking-promos/", PublicPromoBookingListView.as_view(), name="public-promo-booking-list"),
     path("promos/<int:pk>", PublicPromoDetailView.as_view(), name="public-promo-detail"),
     path(
         "recommendations/promos",

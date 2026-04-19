@@ -1,9 +1,25 @@
 from rest_framework import serializers
 
+from layanan.models import Layanan
 from .models import Promo
 
 
 class PromoWriteSerializer(serializers.ModelSerializer):
+    applicable_service_ids = serializers.SlugRelatedField(
+        queryset=Layanan.objects.all(),
+        many=True,
+        slug_field='layanan_id',
+        source='applicable_services',
+        required=False,
+    )
+    benefit_free_service_id = serializers.SlugRelatedField(
+        queryset=Layanan.objects.all(),
+        slug_field='layanan_id',
+        source='benefit_free_service',
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = Promo
         fields = [
@@ -17,6 +33,13 @@ class PromoWriteSerializer(serializers.ModelSerializer):
             "posting_state",
             "cta_type",
             "cta_text",
+            "min_total_price",
+            "applicable_service_ids",
+            "benefit_type",
+            "benefit_free_service_id",
+            "benefit_discount_amount",
+            "benefit_discount_percent",
+            "show_in_booking",
         ]
         extra_kwargs = {
             "title": {"required": True},
@@ -62,6 +85,8 @@ class PromoReadSerializer(serializers.ModelSerializer):
     cta_label = serializers.SerializerMethodField()
     availability_status = serializers.SerializerMethodField()
     period = serializers.SerializerMethodField()
+    applicable_service_ids = serializers.SerializerMethodField()
+    benefit_free_service_id = serializers.SerializerMethodField()
 
     class Meta:
         model = Promo
@@ -80,6 +105,13 @@ class PromoReadSerializer(serializers.ModelSerializer):
             "cta_enabled",
             "cta_label",
             "availability_status",
+            "min_total_price",
+            "applicable_service_ids",
+            "benefit_type",
+            "benefit_free_service_id",
+            "benefit_discount_amount",
+            "benefit_discount_percent",
+            "show_in_booking",
             "created_at",
             "updated_at",
         ]
@@ -107,6 +139,12 @@ class PromoReadSerializer(serializers.ModelSerializer):
             "end_date": obj.end_date,
         }
 
+    def get_applicable_service_ids(self, obj: Promo):
+        return list(obj.applicable_services.values_list('layanan_id', flat=True))
+
+    def get_benefit_free_service_id(self, obj: Promo):
+        return obj.benefit_free_service.layanan_id if obj.benefit_free_service else None
+
 
 class PromoAdminListSerializer(PromoReadSerializer):
     action = serializers.SerializerMethodField()
@@ -121,3 +159,34 @@ class PromoAdminListSerializer(PromoReadSerializer):
             "can_unarchive": obj.posting_state == Promo.PostingState.ARCHIVED and obj.deleted_at is None,
             "can_delete": obj.deleted_at is None,
         }
+
+
+class PromoBookingSerializer(serializers.ModelSerializer):
+    """Serializer untuk public booking-promos endpoint."""
+    applicable_service_ids = serializers.SerializerMethodField()
+    benefit_free_service_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Promo
+        fields = [
+            "id",
+            "title",
+            "description",
+            "image",
+            "start_date",
+            "end_date",
+            "min_total_price",
+            "applicable_service_ids",
+            "benefit_type",
+            "benefit_free_service_id",
+            "benefit_discount_amount",
+            "benefit_discount_percent",
+        ]
+
+    def get_applicable_service_ids(self, obj: Promo):
+        """Return list of applicable service IDs. Empty = applies to all services."""
+        return list(obj.applicable_services.values_list('layanan_id', flat=True))
+
+    def get_benefit_free_service_id(self, obj: Promo):
+        """Return the ID of free service if applicable."""
+        return obj.benefit_free_service.layanan_id if obj.benefit_free_service else None

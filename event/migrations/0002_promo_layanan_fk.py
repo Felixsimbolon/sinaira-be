@@ -8,7 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('event', '0001_initial'),
-        ('layanan', '0003_layanan_is_active'),
+        ('layanan', '0001_initial'),
     ]
 
     operations = [

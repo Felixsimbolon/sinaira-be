@@ -2,6 +2,7 @@ from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
+from layanan.models import Layanan
 from .helpers import compute_cta_state, compute_promo_status, resolve_active_cta_label
 
 
@@ -16,6 +17,11 @@ class Promo(models.Model):
 	class ContentType(models.TextChoices):
 		PROMO = "promo", "Promo"
 		EVENT = "event", "Event"
+
+	class BenefitType(models.TextChoices):
+		FREE_SERVICE = "free_service", "Gratis Layanan"
+		DISCOUNT_NOMINAL = "discount_nominal", "Potongan Rp"
+		DISCOUNT_PERCENT = "discount_percent", "Potongan %"
 
 	class PostingState(models.TextChoices):
 		DRAFT = "draft", "Draft"
@@ -44,6 +50,57 @@ class Promo(models.Model):
 	)
 	start_date = models.DateField(blank=True, null=True)
 	end_date = models.DateField(blank=True, null=True)
+
+	# Kondisi promo (opsional)
+	min_total_price = models.DecimalField(
+		max_digits=15,
+		decimal_places=2,
+		blank=True,
+		null=True,
+		help_text="Minimum total harga layanan untuk berlaku promo (dalam Rp)"
+	)
+	applicable_services = models.ManyToManyField(
+		Layanan,
+		blank=True,
+		related_name="applicable_promos",
+		help_text="Layanan yang berlaku untuk promo ini. Kosong = semua layanan"
+	)
+
+	# Benefit promo
+	benefit_type = models.CharField(
+		max_length=20,
+		choices=BenefitType.choices,
+		blank=True,
+		null=True,
+		help_text="Tipe benefit promo"
+	)
+	benefit_free_service = models.ForeignKey(
+		Layanan,
+		on_delete=models.SET_NULL,
+		blank=True,
+		null=True,
+		related_name="free_service_promos",
+		help_text="Layanan gratis jika benefit_type adalah free_service"
+	)
+	benefit_discount_amount = models.DecimalField(
+		max_digits=15,
+		decimal_places=2,
+		blank=True,
+		null=True,
+		help_text="Potongan harga dalam Rp jika benefit_type adalah discount_nominal"
+	)
+	benefit_discount_percent = models.IntegerField(
+		blank=True,
+		null=True,
+		help_text="Potongan harga dalam % jika benefit_type adalah discount_percent"
+	)
+
+	# Show in booking
+	show_in_booking = models.BooleanField(
+		default=True,
+		help_text="Tampilkan promo ini di halaman booking customer"
+	)
+
 	cta_type = models.CharField(
 		max_length=20,
 		choices=CtaType.choices,
