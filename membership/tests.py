@@ -1,9 +1,13 @@
 from datetime import date, time
+from decimal import Decimal
 
+from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from booking.models import Booking
+
+User = get_user_model()
 
 
 class MembershipCheckEndpointAPITest(APITestCase):
@@ -143,3 +147,111 @@ class MembershipCheckEndpointAPITest(APITestCase):
         self.assertEqual(response.data['nextMilestone'], 4)
         self.assertEqual(response.data['remainingToNextMilestone'], 4)
         self.assertEqual(response.data['bookingHistory'], [])
+
+
+class MembershipAdminEndpointAPITest(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            username='admin',
+            email='admin@example.com',
+            password='password',
+            name='Admin User',
+            role=User.Role.ADMIN,
+        )
+
+        self.client.force_authenticate(user=self.admin)
+
+        self._create_booking(
+            nama='Siti Lama',
+            no_hp='08123456789',
+            perawatan_pilihan='Relaxing Massage, Facial',
+            total_pembayaran=Decimal('100000'),
+            status=Booking.BookingStatus.COMPLETED,
+        )
+        self._create_booking(
+            nama='Siti Baru',
+            no_hp='08123456789',
+            perawatan_pilihan='Relaxing Massage',
+            total_pembayaran=Decimal('200000'),
+            status=Booking.BookingStatus.COMPLETED,
+        )
+        self._create_booking(
+            nama='Ayu Lestari',
+            no_hp='08999999999',
+            perawatan_pilihan='Foot Reflexology',
+            total_pembayaran=None,
+            status=Booking.BookingStatus.COMPLETED,
+        )
+        self._create_booking(
+            nama='Siti Baru',
+            no_hp='08123456789',
+            perawatan_pilihan='Hot Stone',
+            total_pembayaran=Decimal('300000'),
+            status=Booking.BookingStatus.CANCELLED,
+        )
+
+    def _create_booking(
+        self,
+        *,
+        nama,
+        no_hp,
+        perawatan_pilihan,
+        total_pembayaran,
+        status,
+    ):
+        return Booking.objects.create(
+            nama=nama,
+            alamat='Jl. Melati No. 1',
+            kota='Jakarta',
+            no_hp=no_hp,
+            tgl_treatment=date(2026, 3, 10),
+            jam_treatment=time(9, 0),
+            perawatan_pilihan=perawatan_pilihan,
+            total_pembayaran=total_pembayaran,
+            aromatherapy_oil=Booking.AromatherapyChoice.JASMINE,
+            status=status,
+        )
+
+    def test_membership_admin_returns_aggregated_customer_summary(self):
+        response = self.client.get('/api/membership/admin?ordering=-totalBooking', format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 2)
+
+        first_customer = response.data['results'][0]
+        second_customer = response.data['results'][1]
+
+        self.assertEqual(first_customer['idCustomer'], '08123456789')
+        self.assertEqual(first_customer['namaCustomer'], 'Siti Baru')
+        self.assertEqual(first_customer['nomorTelepon'], '08123456789')
+        self.assertEqual(first_customer['totalBooking'], 2)
+        self.assertEqual(first_customer['totalPembayaran'], 300000)
+        self.assertEqual(first_customer['layananTerbanyak'], 'Relaxing Massage')
+
+        self.assertEqual(second_customer['idCustomer'], '08999999999')
+        self.assertEqual(second_customer['totalBooking'], 1)
+        self.assertEqual(second_customer['totalPembayaran'], 0)
+
+    def test_membership_admin_supports_search_min_booking_and_ordering(self):
+        response = self.client.get(
+            '/api/membership/admin?search=Siti&min_booking=2&ordering=totalPembayaran',
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['count'], 1)
+        self.assertEqual(response.data['results'][0]['nomorTelepon'], '08123456789')
+
+    def test_membership_export_returns_csv(self):
+        response = self.client.get('/api/membership/admin/export?ordering=-totalBooking')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response['Content-Type'], 'text/csv')
+        self.assertEqual(
+            response['Content-Disposition'],
+            'attachment; filename="membership.csv"',
+        )
+
+        content = response.content.decode()
+        self.assertIn('Nama,Nomor Telepon,Total Booking,Total Pembayaran,Layanan Terbanyak', content)
+        self.assertIn('Siti Baru,08123456789,2,300000,Relaxing Massage', content)

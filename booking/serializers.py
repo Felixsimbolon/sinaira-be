@@ -1,7 +1,11 @@
 from rest_framework import serializers
 from django.db import transaction
+from django.db.models import F, Value
+from django.db.models.functions import Replace
+from decimal import Decimal
 from .models import Booking, BookingChangeLog
 from layanan.models import Layanan
+from event.models import Promo
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from datetime import date
@@ -41,6 +45,8 @@ def _get_max_booking_date_from_today(today: date) -> date:
 
 class BookingCreateSerializer(serializers.ModelSerializer):
     MINIMUM_BOOKING_TOTAL = 180000
+    LOYALTY_VISIT_THRESHOLDS = {4, 7, 10}
+    promo_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
 
     class Meta:
         model = Booking
@@ -63,6 +69,7 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             'tahu_dari',
             'notes',
             'voucher_code',
+            'promo_id',
             'status',
             'created_at',
         ]
@@ -77,10 +84,9 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         # Keep order while removing duplicates.
         return list(dict.fromkeys(names))
 
-    def _calculate_base_price_from_layanan(self, perawatan_pilihan: str):
-        selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+    def _resolve_selected_layanan_by_name(self, selected_names: list[str]) -> dict[str, Layanan]:
         if not selected_names:
-            return None
+            return {}
 
         layanan_qs = Layanan.active_objects.filter(
             is_active=True,
@@ -104,7 +110,131 @@ class BookingCreateSerializer(serializers.ModelSerializer):
                 }
             )
 
-        return sum(layanan_by_name[name][0].harga for name in selected_names)
+        return {name: layanan_by_name[name][0] for name in selected_names}
+
+    def _calculate_base_price_from_layanan(self, perawatan_pilihan: str):
+        selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+        if not selected_names:
+            return None
+
+        selected_layanan_by_name = self._resolve_selected_layanan_by_name(selected_names)
+        return sum(selected_layanan_by_name[name].harga for name in selected_names)
+
+    @staticmethod
+    def _phone_candidates(raw_phone: str) -> set[str]:
+        digits = ''.join(ch for ch in (raw_phone or '') if ch.isdigit())
+        candidates = {digits}
+
+        if digits.startswith('0') and len(digits) > 1:
+            candidates.add(f"62{digits[1:]}")
+        elif digits.startswith('62') and len(digits) > 2:
+            candidates.add(f"0{digits[2:]}")
+
+        return {item for item in candidates if item}
+
+    def _count_bookings_for_phone(self, no_hp: str) -> int:
+        phone_candidates = self._phone_candidates(no_hp)
+        if not phone_candidates:
+            return 0
+
+        normalized_no_hp = Replace(
+            Replace(
+                Replace(
+                    Replace(
+                        Replace(F('no_hp'), Value(' '), Value('')),
+                        Value('-'),
+                        Value(''),
+                    ),
+                    Value('+'),
+                    Value(''),
+                ),
+                Value('('),
+                Value(''),
+            ),
+            Value(')'),
+            Value(''),
+        )
+
+        return (
+            Booking.objects
+            .annotate(normalized_phone=normalized_no_hp)
+            .filter(normalized_phone__in=phone_candidates)
+            .count()
+        )
+
+    def _calculate_discount_amount(self, *, base_price: int, perawatan_pilihan: str, no_hp: str, promo_id: int | None, voucher_code: str | None) -> Decimal:
+        base_amount = Decimal(str(base_price))
+
+        if promo_id:
+            promo = Promo.active_objects.filter(
+                pk=promo_id,
+                content_type=Promo.ContentType.PROMO,
+                posting_state=Promo.PostingState.PUBLISHED,
+                show_in_booking=True,
+            ).first()
+            if promo is None:
+                raise serializers.ValidationError({'promo_id': 'Promo tidak tersedia.'})
+
+            today = date.today()
+            if promo.start_date and today < promo.start_date:
+                raise serializers.ValidationError({'promo_id': 'Promo belum dimulai.'})
+            if promo.end_date and today > promo.end_date:
+                raise serializers.ValidationError({'promo_id': 'Promo sudah berakhir.'})
+
+            selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+            promo_service_names = set(promo.applicable_services.values_list('nama', flat=True))
+            if promo_service_names and not set(selected_names).intersection(promo_service_names):
+                raise serializers.ValidationError({'promo_id': 'Promo ini tidak berlaku untuk layanan yang dipilih.'})
+
+            min_total_price = Decimal(str(promo.min_total_price)) if promo.min_total_price is not None else Decimal('0')
+            if min_total_price and base_amount < min_total_price:
+                raise serializers.ValidationError(
+                    {'promo_id': f'Total minimal untuk promo ini adalah Rp {int(min_total_price):,}'.replace(',', '.')}
+                )
+
+            if promo.benefit_type == Promo.BenefitType.DISCOUNT_NOMINAL:
+                discount = Decimal(str(promo.benefit_discount_amount or 0))
+                return min(discount, base_amount)
+
+            if promo.benefit_type == Promo.BenefitType.DISCOUNT_PERCENT:
+                percent = Decimal(str(promo.benefit_discount_percent or 0))
+                return (base_amount * percent / Decimal('100')).quantize(Decimal('1'))
+
+            if promo.benefit_type == Promo.BenefitType.FREE_SERVICE and promo.benefit_free_service is not None:
+                selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+                if promo.benefit_free_service.nama not in selected_names:
+                    raise serializers.ValidationError(
+                        {'promo_id': 'Layanan gratis pada promo ini harus termasuk layanan yang dipilih.'}
+                    )
+                return min(Decimal(str(promo.benefit_free_service.harga)), base_amount)
+
+            return Decimal('0')
+
+        if voucher_code:
+            match = re.match(r'^LOYALTY-(\d+)$', voucher_code.strip().upper())
+            if match:
+                required_visits = int(match.group(1))
+                if required_visits not in self.LOYALTY_VISIT_THRESHOLDS:
+                    raise serializers.ValidationError({'voucher_code': 'Voucher loyalty tidak valid.'})
+
+                prior_count = self._count_bookings_for_phone(no_hp)
+                if prior_count != required_visits:
+                    raise serializers.ValidationError(
+                        {'voucher_code': f'Voucher ini hanya berlaku di kunjungan ke-{required_visits}.'}
+                    )
+
+                selected_names = self._extract_selected_layanan_names(perawatan_pilihan)
+                selected_layanan_by_name = self._resolve_selected_layanan_by_name(selected_names)
+                if not selected_layanan_by_name:
+                    return Decimal('0')
+
+                cheapest_price = min(
+                    Decimal(str(layanan.harga))
+                    for layanan in selected_layanan_by_name.values()
+                )
+                return min(cheapest_price, base_amount)
+
+        return Decimal('0')
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -127,7 +257,18 @@ class BookingCreateSerializer(serializers.ModelSerializer):
                 }
             )
 
+        promo_id = attrs.get('promo_id')
+        voucher_code = attrs.get('voucher_code')
+        discount_amount = self._calculate_discount_amount(
+            base_price=calculated_harga,
+            perawatan_pilihan=attrs.get('perawatan_pilihan', ''),
+            no_hp=attrs.get('no_hp', ''),
+            promo_id=promo_id,
+            voucher_code=voucher_code,
+        )
+
         attrs['calculated_harga'] = calculated_harga
+        attrs['calculated_total_pembayaran'] = max(Decimal(str(calculated_harga)) - discount_amount, Decimal('0'))
         return attrs
 
     def validate_no_hp(self, value):
@@ -182,6 +323,13 @@ class BookingCreateSerializer(serializers.ModelSerializer):
         calculated_harga = validated_data.pop('calculated_harga', None)
         if calculated_harga is not None:
             validated_data['harga'] = calculated_harga
+
+        calculated_total = validated_data.pop('calculated_total_pembayaran', None)
+        if calculated_total is not None:
+            validated_data['total_pembayaran'] = calculated_total
+
+        # promo_id is a write-only helper and not stored on the booking model.
+        validated_data.pop('promo_id', None)
         
         return super().create(validated_data)
 

@@ -6,7 +6,7 @@ from rest_framework.views import APIView
 from .models import Promo
 from .permissions import IsAdminSupervisorOrOwner, IsOwnerOnly, PublicReadPermission
 from .repositories import PromoRepository
-from .serializers import PromoAdminListSerializer, PromoReadSerializer, PromoWriteSerializer
+from .serializers import PromoAdminListSerializer, PromoReadSerializer, PromoWriteSerializer, PromoBookingSerializer
 from .services import PromoService, build_promo_recommendations
 
 
@@ -119,6 +119,23 @@ class PublicPromoDetailView(generics.RetrieveAPIView):
 
 	def get_queryset(self):
 		return self.repository.public_queryset()
+
+
+class PublicPromoBookingListView(generics.ListAPIView):
+	"""GET /api/promos/booking-promos - Return promo tersedia untuk booking page."""
+	serializer_class = PromoBookingSerializer
+	permission_classes = [PublicReadPermission]
+
+	def __init__(self, **kwargs):
+		super().__init__(**kwargs)
+		self.repository = PromoRepository()
+
+	def get_queryset(self):
+		"""Return only promos with show_in_booking=True dan content_type='promo'."""
+		return self.repository.public_queryset().filter(
+			show_in_booking=True,
+			content_type=Promo.ContentType.PROMO
+		)
 
 
 class PromoRecommendationListView(APIView):

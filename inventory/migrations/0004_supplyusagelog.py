@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('booking', '0010_booking_layanans'),
-        ('inventory', '0003_add_usage_per_unit_and_supply_assignment'),
+        ('inventory', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

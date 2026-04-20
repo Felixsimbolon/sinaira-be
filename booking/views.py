@@ -2,7 +2,8 @@ from rest_framework import generics, permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend, FilterSet, CharFilter, DateFilter
-from django.db.models import Q
+from django.db.models import Q, F, Value
+from django.db.models.functions import Replace
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from .models import Booking
@@ -104,6 +105,22 @@ class CheckPhoneNumberView(APIView):
     Returns booking count for the phone number.
     """
     permission_classes = [AllowAnyPermission]
+    
+    @staticmethod
+    def _digits_only(value: str) -> str:
+        return ''.join(ch for ch in value if ch.isdigit())
+    
+    def _phone_candidates(self, raw_phone: str) -> set[str]:
+        """Build equivalent phone candidates for 08.. and 62.. formats."""
+        digits = self._digits_only(raw_phone)
+        candidates = {digits}
+        
+        if digits.startswith('0') and len(digits) > 1:
+            candidates.add(f"62{digits[1:]}")
+        elif digits.startswith('62') and len(digits) > 2:
+            candidates.add(f"0{digits[2:]}")
+        
+        return {item for item in candidates if item}
 
     def get(self, request):
         no_hp = request.query_params.get('no_hp', None)
@@ -114,14 +131,55 @@ class CheckPhoneNumberView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        bookings_count = Booking.objects.filter(no_hp=no_hp).count()
+        phone_candidates = self._phone_candidates(no_hp)
+
+        normalized_no_hp = Replace(
+            Replace(
+                Replace(
+                    Replace(
+                        Replace(F('no_hp'), Value(' '), Value('')),
+                        Value('-'),
+                        Value(''),
+                    ),
+                    Value('+'),
+                    Value(''),
+                ),
+                Value('('),
+                Value(''),
+            ),
+            Value(')'),
+            Value(''),
+        )
+
+        base_qs = (
+            Booking.objects
+            .annotate(normalized_phone=normalized_no_hp)
+            .filter(normalized_phone__in=phone_candidates)
+        )
+        matching_bookings = (
+            Booking.objects
+            .annotate(normalized_phone=normalized_no_hp)
+            .filter(normalized_phone__in=phone_candidates)
+        )
+        bookings_count = matching_bookings.count()
+        latest_booking = matching_bookings.order_by("-created_at").first()
+        customer_name = latest_booking.nama if latest_booking and latest_booking.nama else None
+        
+
+        bookings_count = base_qs.count()
+        
+        # Hanya hitung yang COMPLETED untuk loyalty voucher
+        completed_bookings_count = base_qs.filter(
+            status=Booking.BookingStatus.COMPLETED
+        ).count()
         
         return Response({
-            'no_hp': no_hp,
+            'no_hp': self._digits_only(no_hp),
             'has_bookings': bookings_count > 0,
-            'bookings_count': bookings_count
+            'bookings_count': bookings_count,
+            'completed_bookings_count': completed_bookings_count,
+            'customer_name': customer_name,
         })
-
 
 # ──────────────────────────────────────────────────────────────────
 # ADMIN VIEWS (Staff Only: Owner, Supervisor, Admin)
