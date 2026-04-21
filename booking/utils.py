@@ -349,8 +349,9 @@ def get_assignable_therapists_by_distance(booking) -> list[dict]:
     Coordinates are sourced from therapist.Therapist profile via username mapping.
     Candidates remain visible even when distance cannot be calculated.
     """
-    if booking.latitude is None or booking.longitude is None:
-        raise ValueError("Booking latitude/longitude is required to calculate therapist distances.")
+    has_booking_coordinates = (
+        booking.latitude is not None and booking.longitude is not None
+    )
 
     therapist_users = User.objects.filter(role='THERAPIST', is_active=True)
     usernames = [user.username for user in therapist_users]
@@ -363,7 +364,8 @@ def get_assignable_therapists_by_distance(booking) -> list[dict]:
         profile = profile_by_username.get(user.username)
         distance_km = None
         if (
-            profile is not None
+            has_booking_coordinates
+            and profile is not None
             and profile.latitude is not None
             and profile.longitude is not None
         ):
@@ -406,6 +408,7 @@ def get_assignable_therapists_by_distance(booking) -> list[dict]:
         key=lambda item: (
             item["distance_km"] is None,
             item["distance_km"] if item["distance_km"] is not None else 0,
+            item["id"],
         )
     )
     return results
