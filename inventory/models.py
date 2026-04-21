@@ -38,6 +38,13 @@ class Inventory(models.Model):
         default=1,
         help_text="Kapasitas penggunaan per 1 unit item (harus > 0).",
     )
+    assignment_inactive_after_days = models.PositiveIntegerField(
+        default=30,
+        help_text=(
+            "Batas hari dasar sebelum assignment dianggap INACTIVE. "
+            "Masa aktif efektif assignment = nilai ini x quantity_assigned."
+        ),
+    )
     keterangan = models.TextField(blank=True, default="")
     is_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)

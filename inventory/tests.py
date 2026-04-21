@@ -1,5 +1,7 @@
 from rest_framework import status
 from rest_framework.test import APITestCase
+from django.core.management import call_command
+from django.utils import timezone
 
 from accounts.models import User
 from inventory.models import Inventory, TherapistSupplyAssignment
@@ -771,6 +773,29 @@ class TherapistSupplyTrackerTest(APITestCase):
         # Verify assignment remaining_usage deducted
         self.assignment.refresh_from_db()
         self.assertEqual(self.assignment.remaining_usage, 8)  # 10 - 2
+
+    def test_booking_completed_still_deducts_when_layanans_not_mapped(self):
+        self.client.force_authenticate(self.owner)
+
+        self.booking.layanans.clear()
+        self.booking.status = Booking.BookingStatus.CHECKED_OUT
+        self.booking.save(update_fields=['status'])
+
+        booking_update_url = f"/api/admin/bookings/{self.booking.booking_id}/status/"
+        resp = self.client.patch(
+            booking_update_url,
+            {"status": Booking.BookingStatus.COMPLETED},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        from inventory.models import SupplyUsageLog
+        logs = SupplyUsageLog.objects.filter(booking=self.booking)
+        self.assertEqual(logs.count(), 1)
+        self.assertEqual(logs[0].jumlah, 2)
+
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.remaining_usage, 8)
         
     def test_tracker_calculates_correctly(self):
         self.client.force_authenticate(self.owner)
@@ -795,3 +820,215 @@ class TherapistSupplyTrackerTest(APITestCase):
         self.assertEqual(rank["therapistId"], self.therapist_profile.id)
         self.assertEqual(rank["totalPemakaian"], 2)
         self.assertEqual(rank["rank"], 1)
+
+
+class InventoryAssignmentInactiveThresholdConfigTest(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="threshold_owner",
+            email="threshold_owner@example.com",
+            password="password123",
+            name="Threshold Owner",
+            role=User.Role.OWNER,
+        )
+        self.supervisor = User.objects.create_user(
+            username="threshold_supervisor",
+            email="threshold_supervisor@example.com",
+            password="password123",
+            name="Threshold Supervisor",
+            role=User.Role.SUPERVISOR,
+        )
+        self.admin = User.objects.create_user(
+            username="threshold_admin",
+            email="threshold_admin@example.com",
+            password="password123",
+            name="Threshold Admin",
+            role=User.Role.ADMIN,
+        )
+
+        self.item = Inventory.objects.create(
+            nama_barang="Minyak Threshold",
+            kategori=Inventory.Kategori.BAHAN_BODY_MASSAGE,
+            lokasi=Inventory.Lokasi.CILEGON,
+            jumlah_stok=20,
+            threshold_minimum=5,
+            usage_per_unit=2,
+        )
+        self.url = f"/api/inventory/{self.item.pk}/assignment-inactive-threshold/"
+
+    def test_no_auth_returns_401(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_admin_returns_403(self):
+        self.client.force_authenticate(self.admin)
+        resp = self.client.patch(
+            self.url,
+            {"assignment_inactive_after_days": 45},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_owner_can_update_threshold(self):
+        self.client.force_authenticate(self.owner)
+        resp = self.client.patch(
+            self.url,
+            {"assignment_inactive_after_days": 45},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["assignment_inactive_after_days"], 45)
+
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.assignment_inactive_after_days, 45)
+
+    def test_supervisor_can_get_threshold(self):
+        self.client.force_authenticate(self.supervisor)
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp.data["item_id"], self.item.id)
+        self.assertEqual(resp.data["assignment_inactive_after_days"], 30)
+
+
+class DeactivateExpiredAssignmentsCommandTest(APITestCase):
+    def setUp(self):
+        self.item = Inventory.objects.create(
+            nama_barang="Item Command",
+            kategori=Inventory.Kategori.BAHAN_BODY_MASSAGE,
+            lokasi=Inventory.Lokasi.CILEGON,
+            jumlah_stok=100,
+            threshold_minimum=10,
+            usage_per_unit=5,
+            assignment_inactive_after_days=10,
+        )
+        self.therapist = Therapist.objects.create(
+            username="therapist_command",
+            name="Therapist Command",
+            email="therapist_command@example.com",
+        )
+
+    def _create_assignment(self, quantity, days_ago):
+        assignment = TherapistSupplyAssignment.objects.create(
+            item=self.item,
+            therapist=self.therapist,
+            quantity_assigned=quantity,
+            usage_per_unit=5,
+            total_usage=quantity * 5,
+            remaining_usage=quantity * 5,
+            status=TherapistSupplyAssignment.Status.ACTIVE,
+        )
+        TherapistSupplyAssignment.objects.filter(pk=assignment.pk).update(
+            assigned_at=timezone.now() - timedelta(days=days_ago)
+        )
+        assignment.refresh_from_db()
+        return assignment
+
+    def test_command_inactivates_only_if_older_than_threshold_times_quantity(self):
+        # threshold=10, qty=3 => effective 30 days
+        expired = self._create_assignment(quantity=3, days_ago=31)
+        boundary = self._create_assignment(quantity=3, days_ago=30)
+
+        call_command("deactivate_expired_assignments")
+
+        expired.refresh_from_db()
+        boundary.refresh_from_db()
+
+        self.assertEqual(expired.status, TherapistSupplyAssignment.Status.INACTIVE)
+        self.assertEqual(boundary.status, TherapistSupplyAssignment.Status.ACTIVE)
+
+    def test_quantity_update_changes_effective_active_days_from_original_assigned_at(self):
+        # threshold=10, initial qty=1, age=15 days => expired if qty remains 1
+        assignment = self._create_assignment(quantity=1, days_ago=15)
+
+        # Update quantity to 2 => effective 20 days, should remain ACTIVE.
+        assignment.quantity_assigned = 2
+        assignment.total_usage = 10
+        assignment.remaining_usage = 10
+        assignment.save(update_fields=["quantity_assigned", "total_usage", "remaining_usage", "updated_at"])
+
+        call_command("deactivate_expired_assignments")
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, TherapistSupplyAssignment.Status.ACTIVE)
+
+
+class DeductionSkipsExpiredAssignmentTest(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username="owner_expiry",
+            email="owner_expiry@example.com",
+            password="password",
+            name="Owner Expiry",
+            role=User.Role.OWNER,
+        )
+        self.therapist_user = User.objects.create_user(
+            username="therapist_expiry",
+            email="therapist_expiry@example.com",
+            password="password",
+            name="Therapist Expiry",
+            role=User.Role.THERAPIST,
+        )
+        self.therapist_profile = Therapist.objects.create(
+            user=self.therapist_user,
+            name=self.therapist_user.name,
+            email=self.therapist_user.email,
+        )
+
+        self.item = Inventory.objects.create(
+            nama_barang="Minyak Expired",
+            kategori=Inventory.Kategori.BAHAN_BODY_MASSAGE,
+            lokasi=Inventory.Lokasi.CILEGON,
+            jumlah_stok=100,
+            threshold_minimum=5,
+            usage_per_unit=5,
+            assignment_inactive_after_days=10,
+        )
+        self.layanan = Layanan.objects.create(
+            nama="Layanan Expiry", harga=100000, durasi_menit=60
+        )
+        LayananSupplyConfig.objects.create(
+            layanan=self.layanan,
+            item=self.item,
+            jumlah_per_use=2,
+        )
+
+        self.assignment = TherapistSupplyAssignment.objects.create(
+            item=self.item,
+            therapist=self.therapist_profile,
+            quantity_assigned=1,
+            usage_per_unit=5,
+            total_usage=5,
+            remaining_usage=5,
+            status=TherapistSupplyAssignment.Status.ACTIVE,
+        )
+        TherapistSupplyAssignment.objects.filter(pk=self.assignment.pk).update(
+            assigned_at=timezone.now() - timedelta(days=11)
+        )
+
+        self.booking = Booking.objects.create(
+            nama="Cust Expiry",
+            no_hp="081212121212",
+            kota="Jakarta",
+            tgl_treatment=date.today(),
+            jam_treatment="10:00:00",
+            perawatan_pilihan="Layanan Expiry",
+            harga=100000,
+            status=Booking.BookingStatus.CHECKED_OUT,
+            therapist=self.therapist_user,
+        )
+        self.booking.layanans.add(self.layanan)
+
+    def test_completed_booking_does_not_deduct_expired_assignment(self):
+        self.client.force_authenticate(self.owner)
+        booking_update_url = f"/api/admin/bookings/{self.booking.booking_id}/status/"
+
+        resp = self.client.patch(
+            booking_update_url,
+            {"status": Booking.BookingStatus.COMPLETED},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+
+        self.assignment.refresh_from_db()
+        self.assertEqual(self.assignment.status, TherapistSupplyAssignment.Status.INACTIVE)
+        self.assertEqual(self.assignment.remaining_usage, 5)
