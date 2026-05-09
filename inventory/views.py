@@ -12,6 +12,7 @@ from .serializers import (
     AssignmentReadSerializer,
     AssignmentCreateSerializer,
     AssignmentUpdateSerializer,
+    AssignmentInactiveThresholdSerializer,
 )
 
 
@@ -328,4 +329,55 @@ class SupplyTrackerView(APIView):
         )
 
         return Response(data, status=status.HTTP_200_OK)
+
+
+class InventoryAssignmentInactiveThresholdView(APIView):
+    """
+    Endpoint konfigurasi threshold inactive assignment per item inventory.
+    Hanya OWNER / SUPERVISOR.
+    """
+
+    permission_classes = [IsAuthenticated, IsOwnerOrSupervisor]
+
+    def get(self, request, item_id, *args, **kwargs):
+        try:
+            item = Inventory.objects.get(pk=item_id, is_deleted=False)
+        except Inventory.DoesNotExist:
+            return Response(
+                {"detail": "Item tidak ditemukan atau sudah dihapus."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            {
+                "item_id": item.id,
+                "assignment_inactive_after_days": item.assignment_inactive_after_days,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, item_id, *args, **kwargs):
+        try:
+            item = Inventory.objects.get(pk=item_id, is_deleted=False)
+        except Inventory.DoesNotExist:
+            return Response(
+                {"detail": "Item tidak ditemukan atau sudah dihapus."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = AssignmentInactiveThresholdSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        item.assignment_inactive_after_days = serializer.validated_data[
+            "assignment_inactive_after_days"
+        ]
+        item.save(update_fields=["assignment_inactive_after_days", "updated_at"])
+
+        return Response(
+            {
+                "item_id": item.id,
+                "assignment_inactive_after_days": item.assignment_inactive_after_days,
+            },
+            status=status.HTTP_200_OK,
+        )
 

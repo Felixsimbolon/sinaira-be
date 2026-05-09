@@ -1476,7 +1476,7 @@ class BookingGeolocationEndpointAPITest(APITestCase):
             'Therapist tidak tersedia pada jam booking.'
         )
 
-    def test_therapists_by_distance_error_jika_booking_tanpa_koordinat(self):
+    def test_therapists_by_distance_tetap_tampil_jika_booking_tanpa_koordinat(self):
         booking_no_coord = Booking.objects.create(
             nama='No Coord Booking',
             alamat='Jl. No Coord',
@@ -1493,7 +1493,37 @@ class BookingGeolocationEndpointAPITest(APITestCase):
             f'/api/admin/bookings/{booking_no_coord.booking_id}/therapists-by-distance/'
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data['data']['results']
+        self.assertGreater(len(results), 0)
+        self.assertTrue(all(item['distance_km'] is None for item in results))
+
+    def test_assign_therapist_berhasil_jika_booking_tanpa_koordinat(self):
+        booking_no_coord = Booking.objects.create(
+            nama='No Coord Assign Booking',
+            alamat='Jl. No Coord Assign',
+            kota='Jakarta Selatan',
+            no_hp='081234567802',
+            tgl_treatment=date.today() + timedelta(days=1),
+            jam_treatment=time(14, 0),
+            perawatan_pilihan='Reflexology',
+            aromatherapy_oil=Booking.AromatherapyChoice.ROSE,
+            status=Booking.BookingStatus.PAID,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f'/api/admin/bookings/{booking_no_coord.booking_id}/assign-therapist/',
+            {
+                'therapist_id': self.near_user.id,
+            },
+            format='json',
+        )
+
+        booking_no_coord.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(booking_no_coord.status, Booking.BookingStatus.ASSIGNED)
+        self.assertEqual(booking_no_coord.therapist_id, self.near_user.id)
 
     def test_non_admin_tidak_bisa_akses_therapists_by_distance(self):
         self.client.force_authenticate(user=self.non_admin)

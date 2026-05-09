@@ -1,14 +1,98 @@
 import logging
 import math
-from datetime import date
+from datetime import date, timedelta
 from django.db import transaction
 from django.db.models import Sum, Count, F, Q
+from django.utils import timezone
 
 from booking.models import Booking
 from inventory.models import Inventory, TherapistSupplyAssignment, SupplyUsageLog
-from layanan.models import LayananSupplyConfig
+from layanan.models import Layanan, LayananSupplyConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _get_booking_layanans_for_supply_usage(booking: Booking):
+    """
+    Resolve layanan linked to a booking.
+    Priority:
+    1) explicit ManyToMany mapping in booking.layanans
+    2) fallback parsing from booking.perawatan_pilihan (legacy bookings)
+    """
+    mapped_layanans = list(
+        booking.layanans.filter(is_deleted=False).only("id", "nama")
+    )
+    if mapped_layanans:
+        return mapped_layanans
+
+    perawatan_pilihan = booking.perawatan_pilihan or ""
+    selected_names = [name.strip() for name in perawatan_pilihan.split(",") if name.strip()]
+    if not selected_names:
+        return []
+
+    resolved_layanans = []
+    seen_ids = set()
+    for layanan_name in selected_names:
+        layanan = (
+            Layanan.active_objects.filter(is_active=True, nama__iexact=layanan_name)
+            .order_by("id")
+            .first()
+        )
+        if not layanan:
+            logger.warning(
+                "Unable to resolve layanan '%s' from booking %s perawatan_pilihan.",
+                layanan_name,
+                booking.booking_id,
+            )
+            continue
+
+        if layanan.id in seen_ids:
+            continue
+
+        seen_ids.add(layanan.id)
+        resolved_layanans.append(layanan)
+
+    return resolved_layanans
+
+
+def is_assignment_expired(assignment: TherapistSupplyAssignment, now=None) -> bool:
+    """
+    Assignment dianggap expired jika usia assignment >
+    (item.assignment_inactive_after_days * quantity_assigned).
+    Boundary: tepat N hari masih ACTIVE.
+    """
+    now = now or timezone.now()
+    effective_days = (
+        assignment.item.assignment_inactive_after_days * assignment.quantity_assigned
+    )
+    age_days = (now - assignment.assigned_at).days
+    return age_days > effective_days
+
+
+def deactivate_expired_assignments(therapist=None, item=None, now=None) -> int:
+    """
+    Menandai assignment ACTIVE yang sudah melewati masa aktif efektif menjadi INACTIVE.
+    Dapat difilter per therapist/item untuk efisiensi pada alur booking COMPLETED.
+    """
+    now = now or timezone.now()
+    qs = TherapistSupplyAssignment.objects.filter(
+        status=TherapistSupplyAssignment.Status.ACTIVE,
+        is_deleted=False,
+    ).select_related("item")
+
+    if therapist is not None:
+        qs = qs.filter(therapist=therapist)
+    if item is not None:
+        qs = qs.filter(item=item)
+
+    updated = 0
+    for assignment in qs:
+        if is_assignment_expired(assignment, now=now):
+            assignment.status = TherapistSupplyAssignment.Status.INACTIVE
+            assignment.save(update_fields=["status", "updated_at"])
+            updated += 1
+
+    return updated
 
 
 def record_supply_usage_for_completed_booking(booking: Booking) -> bool:
@@ -27,9 +111,12 @@ def record_supply_usage_for_completed_booking(booking: Booking) -> bool:
         return False
 
     # 2. Collect item requirements from multiple layanans
-    layanans = booking.layanans.all()
+    layanans = _get_booking_layanans_for_supply_usage(booking)
     if not layanans:
-        logger.info(f"Booking {booking.booking_id} has no layanans mapped. Skipping supply usage.")
+        logger.info(
+            "Booking %s has no resolvable layanans. Supply usage logging skipped.",
+            booking.booking_id,
+        )
         return False
 
     # Aggregate total jumlah_per_use per item required
@@ -81,6 +168,11 @@ def record_supply_usage_for_completed_booking(booking: Booking) -> bool:
             )
 
             # Deduct FIFO from active assignments
+            deactivate_expired_assignments(
+                therapist=therapist_profile,
+                item=item,
+            )
+
             active_assignments = TherapistSupplyAssignment.objects.select_for_update().filter(
                 therapist=therapist_profile,
                 item=item,
@@ -108,7 +200,7 @@ def record_supply_usage_for_completed_booking(booking: Booking) -> bool:
 
             if remaining_to_deduct > 0:
                 logger.warning(
-                    f"Therapist {therapist.name} used {jumlah_required} of {item.nama_barang} "
+                    f"Therapist {therapist_profile.name} used {jumlah_required} of {item.nama_barang} "
                     f"but active assignments fell short by {remaining_to_deduct}."
                 )
 

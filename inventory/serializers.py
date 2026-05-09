@@ -19,6 +19,7 @@ class InventorySerializer(serializers.ModelSerializer):
             "jumlah_stok",
             "threshold_minimum",
             "usage_per_unit",
+            "assignment_inactive_after_days",
             "status_stok",
             "keterangan",
         ]
@@ -42,6 +43,7 @@ class InventoryWriteSerializer(serializers.ModelSerializer):
             "jumlah_stok",
             "threshold_minimum",
             "usage_per_unit",
+            "assignment_inactive_after_days",
             "keterangan",
         ]
 
@@ -75,6 +77,13 @@ class InventoryWriteSerializer(serializers.ModelSerializer):
     def validate_usage_per_unit(self, value: int) -> int:
         if value is not None and value < 1:
             raise serializers.ValidationError("Usage per unit harus minimal 1.")
+        return value
+
+    def validate_assignment_inactive_after_days(self, value: int) -> int:
+        if value is not None and value < 1:
+            raise serializers.ValidationError(
+                "Assignment inactive after days harus minimal 1."
+            )
         return value
 
     def validate_keterangan(self, value):
@@ -220,4 +229,10 @@ class AssignmentUpdateSerializer(serializers.Serializer):
                 )
 
         return attrs
+
+
+class AssignmentInactiveThresholdSerializer(serializers.Serializer):
+    """Serializer untuk endpoint konfigurasi threshold inactive assignment per item."""
+
+    assignment_inactive_after_days = serializers.IntegerField(min_value=1)
 
