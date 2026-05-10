@@ -99,16 +99,23 @@ class BookingCreateSerializer(serializers.ModelSerializer):
 
         # If data layanan is incomplete/ambiguous, reject to keep price deterministic.
         missing_names = [name for name in selected_names if name not in layanan_by_name]
-        has_ambiguous_name = any(len(items) > 1 for items in layanan_by_name.values())
-        if missing_names or has_ambiguous_name:
-            raise serializers.ValidationError(
-                {
-                    'perawatan_pilihan': (
-                        'Perawatan pilihan tidak valid atau duplikat. '
-                        'Pastikan layanan yang dipilih tersedia dan unik.'
-                    )
-                }
-            )
+        ambiguous = {name: items for name, items in layanan_by_name.items() if len(items) > 1}
+        if missing_names or ambiguous:
+            errors: dict = {}
+            if missing_names:
+                errors['perawatan_pilihan'] = (
+                    f"Layanan tidak ditemukan: {', '.join(missing_names)}. "
+                    "Periksa penulisan nama layanan atau pilih layanan yang tersedia."
+                )
+            if ambiguous:
+                amb_list = [f"{name} ({len(items)} matches)" for name, items in ambiguous.items()]
+                errors.setdefault('perawatan_pilihan', '')
+                errors['perawatan_pilihan'] += (
+                    (" " if errors['perawatan_pilihan'] else "") +
+                    f"Nama layanan ambigu: {', '.join(amb_list)}. Hubungi admin untuk melaporkan data duplikat."
+                )
+
+            raise serializers.ValidationError(errors)
 
         return {name: layanan_by_name[name][0] for name in selected_names}
 
@@ -249,10 +256,26 @@ class BookingCreateSerializer(serializers.ModelSerializer):
             )
 
         if calculated_harga < self.MINIMUM_BOOKING_TOTAL:
+            selected_names = self._extract_selected_layanan_names(attrs.get('perawatan_pilihan', ''))
+            # Try to provide a helpful breakdown if possible
+            details = []
+            try:
+                layanan_qs = Layanan.active_objects.filter(nama__in=selected_names).only('nama', 'harga')
+                layanan_map = {l.nama: l for l in layanan_qs}
+                for name in selected_names:
+                    l = layanan_map.get(name)
+                    if l:
+                        details.append(f"{l.nama}: Rp {int(l.harga):,}".replace(',', '.'))
+                    else:
+                        details.append(f"{name}: -")
+            except Exception:
+                details = []
+
             raise serializers.ValidationError(
                 {
                     'perawatan_pilihan': (
-                        f'Total harga layanan minimal Rp {self.MINIMUM_BOOKING_TOTAL:,}.'.replace(',', '.')
+                        f'Total harga layanan minimal Rp {self.MINIMUM_BOOKING_TOTAL:,}. '.replace(',', '.') +
+                        (f"Ringkasan pilihan: {', '.join(details)}." if details else '')
                     )
                 }
             )
