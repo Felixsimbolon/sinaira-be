@@ -19,6 +19,7 @@ from .serializers import (
     BookingGeocodeSerializer,
     BookingChangeLogSerializer,
 )
+from layanan.models import Layanan
 from .permissions import IsAdminOrSupervisorOrOwner, IsTherapist
 from .utils import (
     extract_booking_from_whatsapp_message,
@@ -65,16 +66,43 @@ class BookingCreateView(generics.CreateAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
-        
         headers = self.get_success_headers(serializer.data)
-        return Response(
-            {
-                'message': 'Booking created successfully',
-                'data': serializer.data
-            },
-            status=status.HTTP_201_CREATED,
-            headers=headers
-        )
+
+        # Build richer response: include per-layanan detail and discount info
+        instance = serializer.instance
+        selected_names = []
+        if instance and getattr(instance, 'perawatan_pilihan', None):
+            selected_names = [name.strip() for name in instance.perawatan_pilihan.split(',') if name.strip()]
+
+        service_details = []
+        if selected_names:
+            layanan_qs = Layanan.active_objects.filter(nama__in=selected_names).only('nama', 'harga', 'durasi_menit')
+            layanan_by_name = {l.nama: l for l in layanan_qs}
+            for name in selected_names:
+                l = layanan_by_name.get(name)
+                if l:
+                    service_details.append({'nama': l.nama, 'harga': int(l.harga), 'durasi_menit': getattr(l, 'durasi_menit', None)})
+                else:
+                    service_details.append({'nama': name, 'harga': None, 'durasi_menit': None})
+
+        harga_before_discount = None
+        total_after = None
+        discount_amount = None
+        if instance:
+            harga_before_discount = int(instance.harga) if instance.harga is not None else None
+            total_after = int(instance.total_pembayaran) if instance.total_pembayaran is not None else None
+            if harga_before_discount is not None and total_after is not None:
+                discount_amount = max(0, harga_before_discount - total_after)
+
+        payload = {
+            'message': 'Booking created successfully',
+            'data': serializer.data,
+            'service_details': service_details,
+            'harga_before_discount': harga_before_discount,
+            'discount_amount': discount_amount,
+        }
+
+        return Response(payload, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class CustomerBookingHistoryView(generics.ListAPIView):
@@ -256,6 +284,7 @@ class AdminBookingDetailView(generics.RetrieveUpdateAPIView):
 
 class AdminBookingReviewLinkView(APIView):
     """
+                from layanan.models import Layanan
     Generate (or return existing) review link token for a COMPLETED booking.
     Only accessible to: OWNER, SUPERVISOR, ADMIN.
     """
