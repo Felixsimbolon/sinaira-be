@@ -13,7 +13,6 @@ from django.db.models import Count, Max, Min
 from django.utils import timezone
 
 from booking.models import Booking
-from event.helpers import compute_promo_status
 from event.models import Promo
 
 
@@ -66,10 +65,9 @@ def build_cohort_matrix(end_date: date, months_back: int = 6) -> dict:
     cohort_start = _add_months(end_date.replace(day=1), -months_back + 1)
     cohort_end = end_date
 
-    # ── All completed bookings with a valid phone number ───────────────
+    # ── All bookings with a valid phone number ─────────────────────────
     bookings = (
         Booking.objects.filter(
-            status=Booking.BookingStatus.COMPLETED,
             no_hp__isnull=False,
         )
         .exclude(no_hp="")
@@ -181,10 +179,7 @@ def find_at_risk_customers() -> list[dict]:
 
     # ── Customers with ≥3 completed bookings ───────────────────────────
     customer_stats = (
-        Booking.objects.filter(
-            status=Booking.BookingStatus.COMPLETED,
-            no_hp__isnull=False,
-        )
+        Booking.objects.filter(no_hp__isnull=False)
         .exclude(no_hp="")
         .values("no_hp")
         .annotate(
@@ -219,10 +214,7 @@ def find_at_risk_customers() -> list[dict]:
 
         # Fetch latest name for this customer
         latest_booking = (
-            Booking.objects.filter(
-                no_hp=phone,
-                status=Booking.BookingStatus.COMPLETED,
-            )
+            Booking.objects.filter(no_hp=phone)
             .order_by("-tgl_treatment", "-jam_treatment")
             .values("nama")
             .first()
@@ -292,6 +284,8 @@ def compute_promo_impact(
     Returns list of per-promo dicts.
     """
     promos = Promo.active_objects.filter(
+        content_type=Promo.ContentType.PROMO,
+        posting_state=Promo.PostingState.PUBLISHED,
         start_date__isnull=False,
         end_date__isnull=False,
         start_date__lte=end_date,
@@ -301,13 +295,6 @@ def compute_promo_impact(
     results: list[dict] = []
 
     for promo in promos:
-        status = compute_promo_status(
-            start_date=promo.start_date,
-            end_date=promo.end_date,
-        )
-        if status not in ("active", "expired"):
-            continue
-
         # ── Promo period ───────────────────────────────────────────────
         promo_start = promo.start_date
         promo_end = promo.end_date

@@ -21,6 +21,7 @@ from .serializers import (
     TherapistPerformanceSummaryQuerySerializer,
 )
 from .services import aggregate_kpi
+from .therapist_services import compute_all_therapist_retentions, get_therapist_detail
 
 
 class TherapistPerformanceSummaryView(APIView):
@@ -80,6 +81,12 @@ class TherapistPerformanceSummaryView(APIView):
 			.order_by("therapist__name")
 		)
 
+		# AC 17-19: batch-compute clientRetentionRate for each therapist
+		therapist_ids = [row["therapist_id"] for row in therapist_rows]
+		retention_map = compute_all_therapist_retentions(
+			therapist_ids, start_date, end_date
+		)
+
 		by_therapist = [
 			{
 				"therapistId": row["therapist_id"],
@@ -92,6 +99,7 @@ class TherapistPerformanceSummaryView(APIView):
 					if row["average_rating"] is not None
 					else None
 				),
+				"clientRetentionRate": retention_map.get(row["therapist_id"]),
 			}
 			for row in therapist_rows
 		]
@@ -226,6 +234,36 @@ class PromoImpactView(APIView):
 		)
 
 		return Response(results, status=status.HTTP_200_OK)
+
+
+class TherapistDetailReportView(APIView):
+	"""
+	GET /api/reports/therapist/<int:therapist_id>/detail
+
+	Query params (required):
+	- startDate: YYYY-MM-DD
+	- endDate: YYYY-MM-DD
+	"""
+
+	permission_classes = [IsAuthenticated, IsSupervisorOrOwner]
+
+	def get(self, request, therapist_id: int):
+		query_serializer = TherapistPerformanceSummaryQuerySerializer(
+			data=request.query_params
+		)
+		query_serializer.is_valid(raise_exception=True)
+
+		start_date = query_serializer.validated_data["start_date"]
+		end_date = query_serializer.validated_data["end_date"]
+
+		detail = get_therapist_detail(therapist_id, start_date, end_date)
+		if detail is None:
+			return Response(
+				{"message": "Data therapist tidak ditemukan di periode ini."},
+				status=status.HTTP_404_NOT_FOUND,
+			)
+
+		return Response(detail, status=status.HTTP_200_OK)
 
 
 

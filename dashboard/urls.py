@@ -6,6 +6,7 @@ from .views import (
     GlobalDateFilterView,
     KPIAggregationView,
     PromoImpactView,
+    TherapistDetailReportView,
     TherapistPerformanceSummaryView,
 )
 
@@ -36,6 +37,11 @@ urlpatterns = [
         "dashboard/membership/promo-impact",
         PromoImpactView.as_view(),
         name="membership-promo-impact",
+    ),
+    path(
+        "reports/therapist/<int:therapist_id>/detail",
+        TherapistDetailReportView.as_view(),
+        name="therapist-detail-report",
     ),
     path(
         "dashboard/date-filter",
