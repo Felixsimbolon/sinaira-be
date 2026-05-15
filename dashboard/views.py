@@ -10,6 +10,7 @@ from review.models import Review
 from .membership_services import (
     build_cohort_matrix,
     compute_promo_impact,
+    compute_repeat_rate_kpi,
     find_at_risk_customers,
 )
 from .permissions import IsSupervisorOrOwner
@@ -17,10 +18,12 @@ from .serializers import (
     CohortQuerySerializer,
     GlobalDateFilterSerializer,
     KPIAggregationQuerySerializer,
+    KPISummaryQuerySerializer,
     PromoImpactQuerySerializer,
+    RepeatBookingRateQuerySerializer,
     TherapistPerformanceSummaryQuerySerializer,
 )
-from .services import aggregate_kpi
+from .services import aggregate_kpi, aggregate_kpi_summary
 from .therapist_services import compute_all_therapist_retentions, get_therapist_detail
 
 
@@ -159,6 +162,35 @@ class KPIAggregationView(APIView):
 		return Response(payload, status=status.HTTP_200_OK)
 
 
+class KPISummaryView(APIView):
+	"""
+	GET /api/dashboard/kpi-summary
+
+	Returns aggregate KPI card values (not series) for the given period.
+
+	Query params
+	------------
+	startDate   : str  (required)  YYYY-MM-DD
+	endDate     : str  (required)  YYYY-MM-DD
+	compareWith : str  (optional)  'previous_period' | 'previous_year'
+	"""
+
+	permission_classes = [IsAuthenticated, IsSupervisorOrOwner]
+
+	def get(self, request):
+		serializer = KPISummaryQuerySerializer(data=request.query_params)
+		serializer.is_valid(raise_exception=True)
+		data = serializer.validated_data
+
+		payload = aggregate_kpi_summary(
+			start_date=data["start_date"],
+			end_date=data["end_date"],
+			compare_with=data.get("compareWith"),
+		)
+
+		return Response(payload, status=status.HTTP_200_OK)
+
+
 class CohortRetentionView(APIView):
 	"""
 	GET /api/dashboard/membership/cohort
@@ -234,6 +266,37 @@ class PromoImpactView(APIView):
 		)
 
 		return Response(results, status=status.HTTP_200_OK)
+
+
+class RepeatBookingRateView(APIView):
+	"""
+	GET /api/dashboard/membership/repeat-rate
+
+	Returns repeat booking rate KPI:
+	  - currentRate       : rate for [startDate, endDate]
+	  - previousRate      : rate for the equal prior period
+	  - delta             : currentRate - previousRate (pp)
+	  - trend             : 6 monthly data points up to endDate
+
+	Query params
+	------------
+	startDate : str  (required)  YYYY-MM-DD
+	endDate   : str  (required)  YYYY-MM-DD
+	"""
+
+	permission_classes = [IsAuthenticated, IsSupervisorOrOwner]
+
+	def get(self, request):
+		serializer = RepeatBookingRateQuerySerializer(data=request.query_params)
+		serializer.is_valid(raise_exception=True)
+		data = serializer.validated_data
+
+		payload = compute_repeat_rate_kpi(
+			start_date=data["start_date"],
+			end_date=data["end_date"],
+		)
+
+		return Response(payload, status=status.HTTP_200_OK)
 
 
 class TherapistDetailReportView(APIView):

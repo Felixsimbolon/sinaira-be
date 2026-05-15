@@ -5,7 +5,9 @@ from .views import (
     CohortRetentionView,
     GlobalDateFilterView,
     KPIAggregationView,
+    KPISummaryView,
     PromoImpactView,
+    RepeatBookingRateView,
     TherapistDetailReportView,
     TherapistPerformanceSummaryView,
 )
@@ -24,6 +26,11 @@ urlpatterns = [
         name="kpi-aggregation",
     ),
     path(
+        "dashboard/kpi-summary",
+        KPISummaryView.as_view(),
+        name="kpi-summary",
+    ),
+    path(
         "dashboard/membership/cohort",
         CohortRetentionView.as_view(),
         name="membership-cohort",
@@ -37,6 +44,11 @@ urlpatterns = [
         "dashboard/membership/promo-impact",
         PromoImpactView.as_view(),
         name="membership-promo-impact",
+    ),
+    path(
+        "dashboard/membership/repeat-rate",
+        RepeatBookingRateView.as_view(),
+        name="membership-repeat-rate",
     ),
     path(
         "reports/therapist/<int:therapist_id>/detail",
