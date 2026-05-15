@@ -141,8 +141,11 @@ def build_cohort_matrix(end_date: date, months_back: int = 6) -> dict:
 
         matrix.append(row)
 
+    cohort_sizes = [len(cohort_customers[mk]) for mk in cohort_labels]
+
     return {
         "cohortLabels": cohort_labels,
+        "cohortSizes": cohort_sizes,
         "periodLabels": period_labels,
         "matrix": matrix,
     }
@@ -363,3 +366,52 @@ def _promo_comparison_range(
     except ValueError:
         comp_end = promo_end.replace(year=promo_end.year - 1, day=28)
     return comp_start, comp_end
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. REPEAT BOOKING RATE KPI  (AC 13-15)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def compute_repeat_rate_kpi(*, start_date: date, end_date: date) -> dict:
+    """
+    Compute repeat booking rate KPI for the given period:
+      - currentRate    : rate for [start_date, end_date]
+      - previousRate   : rate for equal-duration period before start_date
+      - delta          : currentRate - previousRate (percentage points)
+      - trend          : list of monthly rates for the 6 months up to end_date
+
+    Returns a dict ready for JSON serialisation.
+    """
+    import calendar
+
+    current_rate = _repeat_booking_rate(start_date, end_date)
+
+    # Previous period: same duration immediately before start_date
+    duration = (end_date - start_date).days + 1
+    prev_end = start_date - timedelta(days=1)
+    prev_start = prev_end - timedelta(days=duration - 1)
+    previous_rate = _repeat_booking_rate(prev_start, prev_end)
+
+    delta = round(current_rate - previous_rate, 2)
+
+    # 6-month monthly trend (month 5 → 0 months before end_date)
+    trend = []
+    for i in range(5, -1, -1):
+        ref = _add_months(end_date.replace(day=1), -i)
+        _, last_day = calendar.monthrange(ref.year, ref.month)
+        m_start = date(ref.year, ref.month, 1)
+        m_end = date(ref.year, ref.month, last_day)
+        if m_end > end_date:
+            m_end = end_date
+        rate = _repeat_booking_rate(m_start, m_end)
+        trend.append({
+            "month": ref.strftime("%Y-%m"),
+            "rate": rate,
+        })
+
+    return {
+        "currentRate": current_rate,
+        "previousRate": previous_rate,
+        "delta": delta,
+        "trend": trend,
+    }

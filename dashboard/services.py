@@ -457,3 +457,111 @@ def aggregate_kpi(
             )
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Executive KPI Summary  (card values, not series)
+# ---------------------------------------------------------------------------
+
+def _compute_period_summary(start_date: date, end_date: date) -> dict:
+    """
+    Compute aggregate KPI values for a single date range.
+    Returns a flat dict suitable for JSON serialisation.
+    """
+    from django.db.models import Min, Q
+
+    all_qs = Booking.objects.filter(
+        tgl_treatment__gte=start_date,
+        tgl_treatment__lte=end_date,
+    )
+
+    total       = all_qs.count()
+    completed   = all_qs.filter(status=Booking.BookingStatus.COMPLETED).count()
+    cancelled   = all_qs.filter(status=Booking.BookingStatus.CANCELLED).count()
+
+    # No-show – gracefully ignore if the status does not exist
+    try:
+        no_show = all_qs.filter(status=Booking.BookingStatus.NO_SHOW).count()
+    except Exception:
+        no_show = 0
+
+    total_revenue = (
+        all_qs.filter(status=Booking.BookingStatus.COMPLETED)
+        .aggregate(
+            s=Coalesce(Sum("total_pembayaran"), Value(0, output_field=DecimalField()))
+        )["s"]
+    )
+    total_revenue = float(total_revenue)
+
+    cancellation_rate = round(cancelled / total * 100, 2) if total else 0.0
+    no_show_rate      = round(no_show   / total * 100, 2) if total else 0.0
+    abv               = round(total_revenue / completed, 2) if completed else None
+
+    # Customer mix – 2 queries only
+    phones_in_period = set(
+        all_qs.filter(no_hp__isnull=False)
+        .exclude(no_hp="")
+        .values_list("no_hp", flat=True)
+        .distinct()
+    )
+    phones_before = set(
+        Booking.objects.filter(
+            no_hp__in=phones_in_period,
+            tgl_treatment__lt=start_date,
+        )
+        .values_list("no_hp", flat=True)
+        .distinct()
+    )
+    total_customers     = len(phones_in_period)
+    returning_customers = len(phones_before)
+    new_customers       = total_customers - returning_customers
+
+    return {
+        "totalRevenue":       total_revenue,
+        "totalBookings":      total,
+        "completedBookings":  completed,
+        "cancelledBookings":  cancelled,
+        "noShowBookings":     no_show,
+        "cancellationRate":   cancellation_rate,
+        "noShowRate":         no_show_rate,
+        "averageBookingValue": abv,
+        "customerMix": {
+            "new":       new_customers,
+            "returning": returning_customers,
+            "total":     total_customers,
+        },
+    }
+
+
+def aggregate_kpi_summary(
+    *,
+    start_date: date,
+    end_date: date,
+    compare_with: str | None = None,
+) -> dict:
+    """
+    Return KPI card summary values for the given period,
+    optionally with a comparison period.
+    """
+    current = _compute_period_summary(start_date, end_date)
+
+    comparison = None
+    if compare_with:
+        comp_start, comp_end = _comparison_range(start_date, end_date, compare_with)
+        comp_data = _compute_period_summary(comp_start, comp_end)
+        comparison = {
+            "period": {
+                "startDate": comp_start.isoformat(),
+                "endDate":   comp_end.isoformat(),
+            },
+            **comp_data,
+        }
+
+    return {
+        "period": {
+            "startDate": start_date.isoformat(),
+            "endDate":   end_date.isoformat(),
+        },
+        "current":    current,
+        "comparison": comparison,
+    }

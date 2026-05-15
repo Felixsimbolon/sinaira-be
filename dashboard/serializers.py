@@ -337,3 +337,76 @@ class GlobalDateFilterSerializer(DateRangeMixin, ComparisonModeMixin, serializer
         attrs = self._resolve_date_range(attrs)
         attrs = self._resolve_comparison(attrs)
         return attrs
+
+
+class RepeatBookingRateQuerySerializer(serializers.Serializer):
+    """Validates query-params for GET /api/dashboard/membership/repeat-rate."""
+
+    startDate = serializers.CharField(required=True)
+    endDate = serializers.CharField(required=True)
+
+    def validate(self, attrs):
+        from datetime import datetime as _dt
+
+        start_raw = attrs.get("startDate")
+        end_raw = attrs.get("endDate")
+
+        try:
+            start_date = _dt.strptime(start_raw, "%Y-%m-%d").date()
+        except ValueError:
+            raise serializers.ValidationError(
+                {"startDate": "Format startDate tidak valid. Gunakan YYYY-MM-DD."}
+            )
+        try:
+            end_date = _dt.strptime(end_raw, "%Y-%m-%d").date()
+        except ValueError:
+            raise serializers.ValidationError(
+                {"endDate": "Format endDate tidak valid. Gunakan YYYY-MM-DD."}
+            )
+
+        if start_date > end_date:
+            raise serializers.ValidationError(
+                {"dateRange": "startDate tidak boleh lebih besar dari endDate."}
+            )
+
+        attrs["start_date"] = start_date
+        attrs["end_date"] = end_date
+        return attrs
+
+
+class KPISummaryQuerySerializer(serializers.Serializer):
+    """Validates query-params for GET /api/dashboard/kpi-summary."""
+
+    startDate   = serializers.CharField(required=True)
+    endDate     = serializers.CharField(required=True)
+    compareWith = serializers.ChoiceField(
+        choices=["previous_period", "previous_year"],
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+
+    def validate(self, attrs):
+        from datetime import datetime as _dt
+
+        try:
+            start_date = _dt.strptime(attrs["startDate"], "%Y-%m-%d").date()
+        except ValueError:
+            raise serializers.ValidationError(
+                {"startDate": "Format startDate tidak valid. Gunakan YYYY-MM-DD."}
+            )
+        try:
+            end_date = _dt.strptime(attrs["endDate"], "%Y-%m-%d").date()
+        except ValueError:
+            raise serializers.ValidationError(
+                {"endDate": "Format endDate tidak valid. Gunakan YYYY-MM-DD."}
+            )
+
+        if start_date > end_date:
+            raise serializers.ValidationError(
+                {"dateRange": "startDate tidak boleh lebih besar dari endDate."}
+            )
+
+        attrs["start_date"] = start_date
+        attrs["end_date"]   = end_date
+        return attrs
