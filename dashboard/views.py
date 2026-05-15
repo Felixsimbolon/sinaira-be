@@ -18,11 +18,12 @@ from .serializers import (
     CohortQuerySerializer,
     GlobalDateFilterSerializer,
     KPIAggregationQuerySerializer,
+    KPISummaryQuerySerializer,
     PromoImpactQuerySerializer,
     RepeatBookingRateQuerySerializer,
     TherapistPerformanceSummaryQuerySerializer,
 )
-from .services import aggregate_kpi
+from .services import aggregate_kpi, aggregate_kpi_summary
 from .therapist_services import compute_all_therapist_retentions, get_therapist_detail
 
 
@@ -156,6 +157,35 @@ class KPIAggregationView(APIView):
 			compare_with=data.get("compareWith"),
 			view_mode=data.get("viewMode", "total"),
 			moving_average_window=data.get("movingAverageWindow", 0),
+		)
+
+		return Response(payload, status=status.HTTP_200_OK)
+
+
+class KPISummaryView(APIView):
+	"""
+	GET /api/dashboard/kpi-summary
+
+	Returns aggregate KPI card values (not series) for the given period.
+
+	Query params
+	------------
+	startDate   : str  (required)  YYYY-MM-DD
+	endDate     : str  (required)  YYYY-MM-DD
+	compareWith : str  (optional)  'previous_period' | 'previous_year'
+	"""
+
+	permission_classes = [IsAuthenticated, IsSupervisorOrOwner]
+
+	def get(self, request):
+		serializer = KPISummaryQuerySerializer(data=request.query_params)
+		serializer.is_valid(raise_exception=True)
+		data = serializer.validated_data
+
+		payload = aggregate_kpi_summary(
+			start_date=data["start_date"],
+			end_date=data["end_date"],
+			compare_with=data.get("compareWith"),
 		)
 
 		return Response(payload, status=status.HTTP_200_OK)
